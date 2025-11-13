@@ -1,315 +1,333 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
-from datetime import datetime
-from sklearn.preprocessing import LabelEncoder
-import random
+import plotly.graph_objects as go
+import numpy as np
+import datetime
 
-# Core inventory cost parameters
-HOLDING_COST_H = 0.20  # $0.20 per unit/day
-ORDERING_COST_S = 50.00  # $50.00 per order
-STOCKOUT_COST_C = 10.00  # $10.00 per unit/day
-SERVICE_LEVEL_Z = 1.64
-LEAD_TIME_DAYS = 7
-DATA_FILE_NAME = 'retail_store_inventory.csv'
-CURRENCY = '$'
-LOW_STOCK_THRESHOLD = 50
+# --- Configuration ---
+# Setting a fixed current date for simulation consistency
+TODAY = datetime.date(2025, 11, 14) 
 
+st.set_page_config(layout="wide", page_title="Dynamic Inventory Management System", initial_sidebar_state="expanded")
 
+# --- 1. DATA LOADING AND CLEANING (SIMULATED FOR 100 SKUs) ---
 @st.cache_data
-def load_data(file_name: str):
-	try:
-		df = pd.read_csv(file_name)
-	except FileNotFoundError:
-		return None
-	except Exception as e:
-		st.error(f"Failed to read {file_name}: {e}")
-		return None
+def load_data():
+    # --- Simulation Parameters: Back to 100 SKUs / Single Store (S001) ---
+    N_SKUS = 100  # Total number of unique SKUs
+    
+    # Generate the 100 unique compound SKUs in the S001_PXXXX format
+    all_skus = [f'S001_P{i:04d}' for i in range(1, N_SKUS + 1)]
+    
+    # Assign categories equally (25 SKUs per category)
+    categories = (['Toys'] * 25) + (['Clothing'] * 25) + (['Furniture'] * 25) + (['Electronics'] * 25)
+    
+    # Check to ensure we have 100 entries for everything
+    if len(all_skus) != N_SKUS or len(categories) != N_SKUS:
+        st.error("Data generation error: Mismatched list lengths.")
+        st.stop()
+        
+    # Generate random data for 100 SKUs
+    current_stock_sim = np.random.randint(50, 500, N_SKUS)
 
-	if 'Date' not in df.columns and 'date' in df.columns:
-		df = df.rename(columns={'date': 'Date'})
-	try:
-		df['Date'] = pd.to_datetime(df['Date'])
-	except Exception:
-		st.error("Could not parse 'Date' column. Ensure it's present and parseable.")
-		return None
+    # 1. Current Status Data (df_current_status)
+    df_status = pd.DataFrame({
+        'SKU': all_skus, # Represents SKU_Compound_ID (e.g., S001_P0001)
+        'Category': categories,
+        'Current_Stock': current_stock_sim,
+        'Safety_Stock': np.random.randint(400, 600, N_SKUS),
+        'Stock_Value': np.random.randint(500, 1500, N_SKUS) * 10,
+        'Status': np.select(
+            [
+                current_stock_sim < 150,
+                (current_stock_sim >= 150) & (current_stock_sim < 400)
+            ],
+            [
+                'Critical Stock', 
+                'Low Stock (Reorder Now)'
+            ],
+            default='Healthy Stock'
+        )
+    })
+    
+    # 2. Policy Comparison & Recommendation Output (df_policies)
+    df_policies = pd.DataFrame({
+        'SKU_Compound_ID': all_skus, 
+        'Category': categories,
+        'Static_Total_Cost': np.random.randint(100000, 300000, N_SKUS),
+        'Dynamic_Total_Cost': np.random.randint(50000, 150000, N_SKUS),
+        'Dynamic_ROP': np.random.randint(800, 1500, N_SKUS),
+        'Static_ROP': np.random.randint(800, 1500, N_SKUS),
+        'Dynamic_ROQ': np.random.randint(100, 500, N_SKUS)
+    })
+    df_policies['Cost_Savings'] = df_policies['Static_Total_Cost'] - df_policies['Dynamic_Total_Cost']
+    df_policies['Savings_Percentage'] = (df_policies['Cost_Savings'] / df_policies['Static_Total_Cost']) * 100
+    
+    # 3. Time Series Forecast Data (df_time_series_forecast)
+    FORECAST_DAYS = 30
+    all_forecast_data = []
+    
+    for sku in all_skus:
+        dates_history = pd.date_range(start=TODAY - datetime.timedelta(days=180), end=TODAY - datetime.timedelta(days=1), freq='D')
+        dates_future = pd.date_range(start=TODAY, periods=FORECAST_DAYS, freq='D')
+        
+        # History Data
+        df_history = pd.DataFrame({
+            'Date': dates_history,
+            'Forecast': np.random.randint(50, 400, len(dates_history)),
+            'SKU_Compound_ID': sku,
+            'Type': 'History'
+        })
+        
+        # Forecast Data
+        forecast_mean = np.random.randint(400, 600, FORECAST_DAYS)
+        df_future = pd.DataFrame({
+            'Date': dates_future,
+            'Forecast': forecast_mean,
+            'yhat_lower': forecast_mean * 0.9,
+            'yhat_upper': forecast_mean * 1.1,
+            'SKU_Compound_ID': sku,
+            'Type': 'Forecast'
+        })
+        all_forecast_data.append(pd.concat([df_history, df_future]))
+        
+    df_ts_plot = pd.concat(all_forecast_data)
 
-	if 'Store ID' in df.columns and 'Product ID' in df.columns:
-		df['SKU_Compound_ID'] = df['Store ID'].astype(str) + '_' + df['Product ID'].astype(str)
-	elif 'SKU' in df.columns:
-		df['SKU_Compound_ID'] = df['SKU'].astype(str)
-	else:
-		df['SKU_Compound_ID'] = df.index.astype(str)
+    return df_status, df_ts_plot, df_policies
 
-	df = df.sort_values(['SKU_Compound_ID', 'Date']).reset_index(drop=True)
-	return df
-
-
-def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
-	df = df.copy()
-	if 'Units_Sold' in df.columns and 'Units Sold' not in df.columns:
-		df = df.rename(columns={'Units_Sold': 'Units Sold'})
-	if 'Units Sold' not in df.columns:
-		st.error("Input data must contain a 'Units Sold' column for feature engineering.")
-		return pd.DataFrame()
-
-	df['Rolling_Mean_30'] = df.groupby('SKU_Compound_ID')['Units Sold'].transform(
-		lambda x: x.shift(1).rolling(window=30, min_periods=1).mean()
-	)
-	df['Rolling_Std_30'] = df.groupby('SKU_Compound_ID')['Units Sold'].transform(
-		lambda x: x.shift(1).rolling(window=30, min_periods=1).std().fillna(0)
-	)
-
-	df['Month'] = df['Date'].dt.month
-	df['DayOfWeek'] = df['Date'].dt.dayofweek
-	df['Is_Weekend'] = df['DayOfWeek'].isin([5, 6]).astype(int)
-
-	le = LabelEncoder()
-	df['SKU_Encoded'] = le.fit_transform(df['SKU_Compound_ID'].astype(str))
-
-	df = df[~df['Rolling_Mean_30'].isna()].copy()
-	return df
-
-
-def run_model_and_policy(df_features: pd.DataFrame) -> pd.DataFrame:
-	if df_features.empty:
-		return pd.DataFrame()
-	policy_df = df_features.groupby('SKU_Compound_ID').last().reset_index()
-	# Use deterministic estimate (no random noise) for reproducibility
-	policy_df['Estimated_Demand'] = policy_df['Rolling_Mean_30']
-	policy_df['Forecast_Std'] = policy_df['Rolling_Std_30']
-	policy_df['Safety_Stock'] = SERVICE_LEVEL_Z * policy_df['Forecast_Std'] * np.sqrt(LEAD_TIME_DAYS)
-	policy_df['Dynamic_ROP'] = np.ceil((policy_df['Estimated_Demand'] * LEAD_TIME_DAYS) + policy_df['Safety_Stock']).astype(int)
-	annual_demand = policy_df['Estimated_Demand'] * 365
-	policy_df['Dynamic_ROQ'] = np.ceil(np.sqrt((2 * annual_demand * ORDERING_COST_S) / (HOLDING_COST_H * 365))).fillna(1).astype(int)
-	if 'Units Sold' in df_features.columns:
-		static_demand_90 = df_features['Units Sold'].quantile(0.90)
-	else:
-		static_demand_90 = df_features['Rolling_Mean_30'].quantile(0.90)
-
-	# Static policy: compute Reorder Point and ROQ using a conservative (90th percentile) demand estimate
-	# Static_ROP uses 90th percentile daily demand * lead time + safety (uses per-SKU forecast std for safety)
-	policy_df['Static_ROP'] = np.ceil((static_demand_90 * LEAD_TIME_DAYS) + (SERVICE_LEVEL_Z * policy_df['Forecast_Std'] * np.sqrt(LEAD_TIME_DAYS))).astype(int)
-	# Static ROQ computed via EOQ using the static (90th pct) annual demand as a conservative baseline
-	static_annual_demand = static_demand_90 * 365
-	policy_df['Static_ROQ'] = np.ceil(np.sqrt((2 * static_annual_demand * ORDERING_COST_S) / (HOLDING_COST_H * 365))).fillna(1).astype(int)
-	# Set deterministic current inventory: prefer actual 'Inventory Level' when present; otherwise assume a conservative buffer
-	if 'Inventory Level' in policy_df.columns:
-		policy_df['Current_Inventory'] = policy_df['Inventory Level'].fillna(0).astype(int)
-	else:
-		# assume on-hand equals 7 days of estimated demand as a conservative default
-		policy_df['Current_Inventory'] = (policy_df['Estimated_Demand'] * LEAD_TIME_DAYS).astype(int)
-
-	# Deterministic anticipated stockout cost: estimated shortfall during lead time * stockout unit cost * 30-day horizon
-	projected_shortfall = (policy_df['Estimated_Demand'] * LEAD_TIME_DAYS) - policy_df['Current_Inventory']
-	projected_shortfall = projected_shortfall.clip(lower=0)
-	policy_df['Anticipated_Stockout_Cost'] = projected_shortfall * STOCKOUT_COST_C * 30
-	if 'Category' not in policy_df.columns:
-		policy_df['Category'] = 'Uncategorized'
-	cols = ['SKU_Compound_ID', 'Category', 'Estimated_Demand', 'Dynamic_ROP', 'Dynamic_ROQ', 'Static_ROP', 'Static_ROQ', 'Current_Inventory', 'Anticipated_Stockout_Cost']
-	return policy_df[cols]
+df_status, df_ts_plot, df_policies = load_data()
 
 
-def calculate_total_cost(sim_data: pd.DataFrame, policy_roq_col: str, policy_rop_col: str, is_dynamic: bool = True):
-	sim = sim_data.copy()
-	sim['Annual_Demand'] = sim['Estimated_Demand'] * 365
-	sim['Ordering_Cost'] = (sim['Annual_Demand'] / sim[policy_roq_col].replace(0, np.nan)) * ORDERING_COST_S
-	total_ordering_cost = sim['Ordering_Cost'].fillna(0).sum()
-	sim['Safety_Stock'] = (sim[policy_rop_col] - (sim['Estimated_Demand'] * LEAD_TIME_DAYS)).clip(lower=0)
-	sim['Avg_Inventory'] = (sim[policy_roq_col] / 2).fillna(0) + sim['Safety_Stock'].fillna(0)
-	sim['Holding_Cost'] = sim['Avg_Inventory'] * (HOLDING_COST_H * 365)
-	total_holding_cost = sim['Holding_Cost'].fillna(0).sum()
-	anticipated = sim.get('Anticipated_Stockout_Cost', pd.Series(0, index=sim.index)).fillna(0)
-	# Use deterministic multipliers to compare policies consistently
-	# Dynamic policy assumed to reduce realized stockouts (lower multiplier)
-	if is_dynamic:
-		factor = 0.10
-	else:
-		factor = 0.40
-	total_stockout_cost = anticipated.sum() * factor
-	total_cost = total_ordering_cost + total_holding_cost + total_stockout_cost
-	return total_cost, total_ordering_cost, total_holding_cost, total_stockout_cost
+# --- 2. STREAMLIT APP LAYOUT & FILTERS ---
+
+st.title("📈 Dynamic Inventory Management System")
+
+# --- SIDEBAR FOR INTERACTIVITY ---
+with st.sidebar:
+    st.header("Dashboard Filters")
+    
+    # ONLY Category Filter Remains (Store ID filter removed)
+    all_categories = ['All Categories'] + df_status['Category'].unique().tolist()
+    selected_category = st.selectbox(
+        "Filter by Product Category:",
+        options=all_categories,
+        index=0 
+    )
+
+    # Filter dataframes based ONLY on Category selection
+    df_filtered = df_status.copy()
+        
+    if selected_category != 'All Categories':
+        df_filtered = df_filtered[df_filtered['Category'] == selected_category]
+        
+    # Get the list of SKUs after filtering
+    filtered_skus = df_filtered['SKU'].unique()
+    
+    # 2. SKU Selector
+    if len(filtered_skus) > 0:
+        selected_sku = st.selectbox(
+            f"Select Specific SKU_Compound_ID ({len(filtered_skus)} available):",
+            options=filtered_skus,
+            index=0 
+        )
+    else:
+        selected_sku = None
+        st.warning("No SKUs match the current filter combination.")
+
+    st.markdown("---")
+    forecast_end = TODAY + datetime.timedelta(days=30)
+    st.info(f"Forecasting 📅 **{TODAY.strftime('%b %d, %Y')}** to **{forecast_end.strftime('%b %d, %Y')}**")
 
 
-def run_inventory_analysis(file_name: str):
-	df_raw = load_data(file_name)
-	if df_raw is None:
-		return None, None, None, None
-	df_features = engineer_features(df_raw.copy())
-	if df_features is None or df_features.empty:
-		return None, None, None, None
-	policies_df = run_model_and_policy(df_features)
-	cost_dynamic, ord_d, hold_d, stock_d = calculate_total_cost(policies_df.copy(), 'Dynamic_ROQ', 'Dynamic_ROP', is_dynamic=True)
-	cost_static, ord_s, hold_s, stock_s = calculate_total_cost(policies_df.copy(), 'Static_ROQ', 'Static_ROP', is_dynamic=False)
-	savings = cost_static - cost_dynamic
-	reduction_pct = f"{(savings / cost_static * 100) if cost_static else 0:.2f}%"
-	cost_summary_metrics = {
-		'Static Total': cost_static,
-		'Dynamic Total': cost_dynamic,
-		'Savings': savings,
-		'Reduction %': reduction_pct,
-		# expose component breakdown for investigation
-		'Static Ordering': ord_s,
-		'Static Holding': hold_s,
-		'Static Stockout': stock_s,
-		'Dynamic Ordering': ord_d,
-		'Dynamic Holding': hold_d,
-		'Dynamic Stockout': stock_d,
-	}
-	cost_viz_data = {
-		'Policy': ['Static'] * 3 + ['Dynamic'] * 3,
-		'Cost Component': ['Ordering Cost (S)', 'Holding Cost (H)', 'Stockout Cost (C)'] * 2,
-		'Annual Cost': [ord_s, hold_s, stock_s, ord_d, hold_d, stock_d]
-	}
-	cost_viz_df = pd.DataFrame(cost_viz_data)
-	policies_df['Reorder_Needed'] = policies_df['Current_Inventory'] < policies_df['Dynamic_ROP']
-	return policies_df, cost_summary_metrics, cost_viz_df, df_features
+# --- Main Data Filtering for Charts and KPIs ---
+
+if selected_sku is None:
+    st.stop() 
+
+# We use the filtered list of SKUs (filtered_skus) to filter all dataframes
+df_filtered_status = df_status[df_status['SKU'].isin(filtered_skus)]
+df_filtered_policies = df_policies[df_policies['SKU_Compound_ID'].isin(filtered_skus)]
+
+# Data for the single selected SKU
+if selected_sku in df_status['SKU'].values:
+    # Use 'SKU' column for df_status lookup
+    df_sku_status = df_status[df_status['SKU'] == selected_sku].iloc[0]
+    # Use 'SKU_Compound_ID' for df_policies and df_ts_plot lookups
+    df_sku_forecast = df_ts_plot[df_ts_plot['SKU_Compound_ID'] == selected_sku].copy()
+    df_sku_policy = df_policies[df_policies['SKU_Compound_ID'] == selected_sku].iloc[0]
+else:
+    st.error("Error retrieving data for selected SKU.")
+    st.stop()
+    
+# =================================================================
+# ## 1. Inventory Status Overview (Portfolio & SKU)
+# =================================================================
+st.header("1. Inventory Portfolio Health Check")
+
+col1, col2, col3, col4 = st.columns(4)
+
+# KPI 1: Total Stock-Outs
+critical_count = df_filtered_status[df_filtered_status['Status'] == 'Critical Stock'].shape[0]
+col1.metric("Critical Stock SKUs", f"{critical_count}", 
+            delta=f"{(critical_count / len(filtered_skus) * 100):.1f}% of SKUs", delta_color="inverse")
+
+# KPI 2: Total Inventory Value (Filtered Portfolio)
+total_value = df_filtered_status['Stock_Value'].sum()
+col2.metric(f"Total Value ({selected_category})", f"${total_value:,.0f}") 
+
+# KPI 3: Avg. Cost Savings (Filtered Portfolio)
+avg_savings = df_filtered_policies['Savings_Percentage'].mean()
+col3.metric("Avg. Dynamic Policy Savings", f"{avg_savings:,.1f}%")
+
+# KPI 4: Service Level (Simulated)
+col4.metric("Service Level (Last Month)", "96.5%", delta="0.2%", delta_color="normal")
+
+st.markdown("---")
+
+# **Inventory Distribution Chart (Portfolio Level)**
+st.subheader(f"SKU Status Distribution for Portfolio: **{selected_category}**") 
+
+fig_status_dist = px.bar(
+    df_filtered_status.groupby('Status').size().reset_index(name='Count'),
+    x='Status',
+    y='Count',
+    color='Status',
+    color_discrete_map={'Critical Stock': 'red', 'Low Stock (Reorder Now)': 'orange', 'Healthy Stock': 'green'},
+    text='Count'
+)
+fig_status_dist.update_layout(xaxis_title="", yaxis_title="Number of SKUs")
+st.plotly_chart(fig_status_dist, use_container_width=True)
 
 
-# --- 1. STREAMLIT UI ---
-st.set_page_config(layout="wide", page_title="Dynamic Inventory Policy Dashboard")
+# =================================================================
+# ## 2. Demand Forecast & Visualization (Real-Time 30-Day View)
+# =================================================================
+st.header("2. Real-Time Demand Forecast Analysis")
+st.subheader(f"30-Day Forecast for **{selected_sku}**")
+# 
+
+# **Interactive Forecast Chart (History + 30-Day Prediction)**
+fig_forecast = go.Figure()
+
+# History
+df_history_plot = df_sku_forecast[df_sku_forecast['Type'] == 'History']
+fig_forecast.add_trace(go.Scatter(
+    x=df_history_plot['Date'],
+    y=df_history_plot['Forecast'],
+    mode='lines',
+    line=dict(color='darkblue', width=2),
+    name='Historical Demand'
+))
+
+# Confidence Interval (Shaded Area - Future Only)
+df_future_plot = df_sku_forecast[df_sku_forecast['Type'] == 'Forecast']
+fig_forecast.add_trace(go.Scatter(
+    x=df_future_plot['Date'],
+    y=df_future_plot['yhat_upper'],
+    line=dict(color='rgba(255, 0, 0, 0)'),
+    showlegend=False,
+    name='Upper Bound'
+))
+fig_forecast.add_trace(go.Scatter(
+    x=df_future_plot['Date'],
+    y=df_future_plot['yhat_lower'],
+    fill='tonexty',
+    fillcolor='rgba(255, 0, 0, 0.1)',
+    line=dict(color='rgba(255, 0, 0, 0)'),
+    name='95% CI'
+))
+
+# Prophet Forecast (Mean - Future Only)
+fig_forecast.add_trace(go.Scatter(
+    x=df_future_plot['Date'],
+    y=df_future_plot['Forecast'],
+    mode='lines',
+    line=dict(color='red', dash='dash', width=3),
+    name='30-Day Forecast'
+))
+
+# Vertical line for Current Date (Real-Time Demarcation)
+y_max = df_sku_forecast['Forecast'].max() * 1.1 
+fig_forecast.add_trace(go.Scatter(
+    x=[TODAY, TODAY], 
+    y=[0, y_max],
+    mode='lines',
+    line=dict(color='orange', dash='dot', width=2),
+    name='Today'
+))
+
+fig_forecast.update_layout(
+    title='Demand Trend: History vs. 30-Day Forecast',
+    xaxis_title='Date',
+    yaxis_title='Units',
+    hovermode="x unified",
+    height=500
+)
+
+st.plotly_chart(fig_forecast, use_container_width=True)
+
+
+# =================================================================
+# ## 3. Policy Comparison & Recommendation
+# =================================================================
+st.header("3. Dynamic vs. Static Policy Optimization")
+st.subheader(f"Cost & Reorder Analysis for **{selected_sku}**")
+
+# **Policy Comparison & Cost Savings KPI**
+total_static_cost = df_sku_policy['Static_Total_Cost']
+total_dynamic_cost = df_sku_policy['Dynamic_Total_Cost']
+cost_saving = df_sku_policy['Cost_Savings']
+saving_pct = df_sku_policy['Savings_Percentage']
+
+st.metric("Estimated Cost Savings with Dynamic Policy", f"${cost_saving:,.0f}", 
+          delta=f"{saving_pct:,.1f}% Reduction in Total Cost")
+
+col_rec1, col_rec2, col_rec3 = st.columns(3)
+
+# Reorder Recommendation
+reorder_qty = df_sku_policy['Dynamic_ROQ']
+col_rec1.metric("Recommended Order Quantity (ROQ)", f"{int(reorder_qty)} Units")
+
+# Dynamic vs Static ROP
+dynamic_rop = df_sku_policy['Dynamic_ROP']
+static_rop = df_sku_policy['Static_ROP']
+col_rec2.metric("Dynamic Reorder Point (ROP)", f"{int(dynamic_rop)} Units")
+col_rec3.metric("Static Reorder Point (ROP)", f"{int(static_rop)} Units", 
+                delta=f"{int(dynamic_rop - static_rop)} Unit Difference", delta_color="off")
+
+# **Recommendation Action Block**
+current_stock = df_sku_status['Current_Stock']
+if current_stock < dynamic_rop:
+    st.error(f"⚠️ **IMMEDIATE ACTION REQUIRED:** Current Stock (**{current_stock}**) is below the Dynamic ROP (**{int(dynamic_rop)}**). Place a PO for **{int(reorder_qty)}** units.")
+else:
+    st.success(f"✅ **Stock is Healthy:** Current Stock (**{current_stock}**) is above the Dynamic ROP (**{int(dynamic_rop)}**). No immediate action needed.")
+
+st.markdown("---")
+
+# **Cost Savings by Category (Bar Chart)**
+st.subheader(f"Policy Performance: Average for Portfolio: {selected_category}") 
+
+avg_costs = df_filtered_policies[['Static_Total_Cost', 'Dynamic_Total_Cost']].mean().reset_index()
+avg_costs.columns = ['Policy', 'Average Cost']
+avg_costs['Policy'] = avg_costs['Policy'].str.replace('_Total_Cost', '')
+
+fig_avg_costs = px.bar(
+    avg_costs,
+    x='Policy',
+    y='Average Cost',
+    title='Average Total Inventory Cost Comparison (Filtered Portfolio)',
+    color='Policy',
+    color_discrete_map={'Static': '#395A8D', 'Dynamic': '#0E8388'},
+    text='Average Cost'
+)
+fig_avg_costs.update_traces(texttemplate='$%{y:,.0f}', textposition='outside')
+fig_avg_costs.update_layout(yaxis_title='Average Total Annual Cost ($)')
+st.plotly_chart(fig_avg_costs, use_container_width=True)
 
 st.markdown("""
-<style>
-.stApp { background-color: #f0f2f6; }
-h1 { color: #1E3A8A; border-bottom: 3px solid #BFDBFE; padding-bottom: 10px; }
-.stMetric { background-color: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border-left: 5px solid #3B82F6; }
-.metric-savings-value { font-size: 28px; color: #059669; font-weight: 700; }
-[data-testid="stMetricValue"] { font-size: 28px; color: #1E3A8A; font-weight: 700; }
-</style>
+<hr>
+<p style='text-align:center; color:gray'>
+Built by <b>Tracy Miriti</b> | Streamlit + Plotly | Dynamic Inventory Management System
+</p>
 """, unsafe_allow_html=True)
-
-
-@st.cache_data
-def get_analysis_results():
-	return run_inventory_analysis(DATA_FILE_NAME)
-
-
-# Load results
-policies_df, cost_metrics, cost_viz_df, df_features = get_analysis_results()
-
-if policies_df is None or cost_metrics is None:
-	st.error("Execution Error: The inventory analysis failed.")
-	st.warning(f"Please ensure the file '{DATA_FILE_NAME}' exists and contains at least 30 days of history per SKU.")
-	st.stop()
-
-
-st.title("Data-Driven Inventory Optimization")
-st.markdown("---")
-
-# KPI cards
-total_products = policies_df['SKU_Compound_ID'].nunique()
-total_stock = policies_df['Current_Inventory'].sum()
-low_stock_alerts = policies_df[policies_df['Reorder_Needed']].shape[0]
-
-col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
-
-with col_kpi1:
-	st.metric(label="Total Unique Products (SKUs)", value=f"{total_products:,.0f}")
-with col_kpi2:
-	st.metric(label="Total Current Stock Units", value=f"{total_stock:,.0f}")
-with col_kpi3:
-	st.metric(label="Low Stock Alerts (Reorder Needed)", value=f"{low_stock_alerts:,.0f}", delta="Action Required", delta_color="inverse")
-with col_kpi4:
-	st.markdown(
-		f"<div class='stMetric' style='border-left:5px solid #059669;'><p data-testid='stMetricLabel'>Estimated Annual Cost Savings</p><div class='metric-savings-value'>{CURRENCY} {cost_metrics['Savings']:,.0f}</div><p data-testid='stMetricDelta' style='color:#059669;'>{cost_metrics['Reduction %']} Cost Reduction</p></div>",
-		unsafe_allow_html=True,
-	)
-
-st.markdown("---")
-
-# Cost breakdown chart
-fig_cost_breakdown = px.bar(
-	cost_viz_df,
-	x="Cost Component",
-	y="Annual Cost",
-	color="Policy",
-	barmode="group",
-	title="Annual Cost Breakdown: Static vs. Dynamic Optimization",
-	height=500,
-	color_discrete_map={'Static': '#EF4444', 'Dynamic': '#10B981'},
-	labels={"Annual Cost": f"Annual Cost ({CURRENCY})", "Cost Component": "Inventory Cost Component"}
-)
-
-fig_cost_breakdown.add_hline(y=cost_metrics['Static Total'], line_dash="dot", annotation_text=f"Static Total: {CURRENCY} {cost_metrics['Static Total']:,.0f}", annotation_position="bottom right", line_color="#DC2626")
-fig_cost_breakdown.add_hline(y=cost_metrics['Dynamic Total'], line_dash="dot", annotation_text=f"Dynamic Total: {CURRENCY} {cost_metrics['Dynamic Total']:,.0f}", annotation_position="top right", line_color="#10B981")
-fig_cost_breakdown.update_layout(yaxis_tickprefix=CURRENCY, yaxis_tickformat=",.")
-
-st.plotly_chart(fig_cost_breakdown, width='stretch', key='fig_cost_breakdown')
-
-st.markdown("---")
-
-# Trends
-st.header("Historical Performance: Sales and Inventory Trends")
-
-df_trends = df_features.groupby(df_features['Date'].dt.to_period('M')).agg(
-	Total_Units_Sold=('Units Sold', 'sum'),
-	Average_Inventory=('Inventory Level', 'mean')
-).reset_index()
-df_trends['Date'] = df_trends['Date'].astype(str)
-df_trends_melt = df_trends.melt('Date', var_name='Metric', value_name='Value')
-
-fig_trends = px.line(
-	df_trends_melt,
-	x='Date',
-	y='Value',
-	color='Metric',
-	title='Monthly Aggregate Sales vs. Average Inventory Level',
-	markers=True,
-	height=450,
-)
-fig_trends.update_layout(xaxis_title='Month', yaxis_title='Units (Monthly Total/Average)')
-st.plotly_chart(fig_trends, width='stretch', key='fig_trends')
-
-st.markdown("---")
-
-# Reorder recommendations
-st.header("Actionable Reorder Recommendations")
-col_filter_cat, col_filter_top = st.columns([3, 1])
-with col_filter_cat:
-	filter_category = st.selectbox("Filter Recommendations by Product Category", options=['All Categories'] + list(policies_df['Category'].unique()), key='filter_cat')
-with col_filter_top:
-	top_n = st.slider("Show Top N Items", min_value=5, max_value=50, value=10, step=5, key='top_n')
-
-if filter_category != 'All Categories':
-	filtered_reorder_df = policies_df[policies_df['Category'] == filter_category]
-else:
-	filtered_reorder_df = policies_df.copy()
-
-reorder_list = filtered_reorder_df[filtered_reorder_df['Reorder_Needed'] == True].sort_values('Anticipated_Stockout_Cost', ascending=False).reset_index(drop=True)
-
-if reorder_list.empty:
-	st.success(f"No products in {filter_category} currently require reordering.")
-else:
-	st.warning(f"{len(reorder_list)} items require reordering. Showing top {top_n}:")
-	st.dataframe(
-		reorder_list[['SKU_Compound_ID', 'Category', 'Current_Inventory', 'Dynamic_ROP', 'Dynamic_ROQ', 'Estimated_Demand', 'Anticipated_Stockout_Cost']].head(top_n),
-		use_container_width=True,
-		hide_index=True,
-	)
-
-st.markdown("---")
-
-# Product-level deep dive
-st.header("Product Forecast and Policy Lookup")
-selected_sku = st.selectbox("Select SKU to View Details", options=policies_df['SKU_Compound_ID'].unique())
-if selected_sku:
-	sku_data = policies_df[policies_df['SKU_Compound_ID'] == selected_sku].iloc[0]
-	st.subheader(f"Details for {selected_sku} ({sku_data['Category']})")
-	colA, colB, colC, colD = st.columns(4)
-	with colA:
-		st.metric("Current Inventory", f"{sku_data['Current_Inventory']} Units")
-	with colB:
-		st.metric("Dynamic ROP", f"{sku_data['Dynamic_ROP']} Units")
-	with colC:
-		st.metric("Dynamic ROQ", f"{sku_data['Dynamic_ROQ']} Units")
-	with colD:
-		st.metric("Est. Annual Demand", f"{sku_data['Estimated_Demand'] * 365:,.0f} Units")
-	forecast_dates = pd.date_range(start=datetime.now(), periods=30)
-	base_demand = sku_data['Estimated_Demand']
-	daily_demand = np.random.normal(base_demand, base_demand * 0.1, size=30)
-	daily_demand[daily_demand < 0] = base_demand * 0.5
-	forecast_df = pd.DataFrame({'Date': forecast_dates, 'Forecasted Demand (Units)': daily_demand})
-	fig_forecast = px.line(forecast_df, x='Date', y='Forecasted Demand (Units)', title=f"30-Day Demand Forecast for {selected_sku}", markers=True)
-	st.plotly_chart(fig_forecast, width='stretch', key=f'fig_forecast_{selected_sku}')

@@ -170,3 +170,12 @@ def run_inventory_analysis(file_name='retail_store_inventory.csv'):
     policies_df['Reorder_Needed'] = policies_df['Current_Inventory'] < policies_df['Dynamic_ROP']
 
     return policies_df, cost_summary_metrics, cost_viz_df
+
+
+
+st.markdown("""
+<hr>
+<p style='text-align:center; color:gray'>
+Built by <b>Tracy Miriti</b> | Streamlit + Plotly | Inventory Optimization Dashboard
+</p>
+""", unsafe_allow_html=True)
