@@ -1,151 +1,100 @@
-**Dynamic Inventory Management System**
+# Dynamic Inventory Management System
 
-🚀 Project Overview
+## 🚀 Project Overview
 
-This project implements a data-driven solution to modernize inventory management. By replacing static, rule-of-thumb reorder policies with a dynamic, predictive engine, the system minimizes total inventory costs.
+This capstone project implements a data-driven solution to modernize inventory management. By replacing static, rule-of-thumb reorder policies with a **dynamic, predictive engine**, the system minimizes total inventory costs.
 
-The core objective is to achieve optimal service levels (avoiding costly stockouts) while simultaneously minimizing holding costs (storage, capital tied up) by accurately forecasting future demand and automatically calculating the optimal Reorder Point (ROP) and Reorder Quantity (ROQ) for a portfolio of 100 unique, compound SKUs.
+The core objective is to achieve **optimal service levels** (avoiding costly stockouts) while simultaneously minimizing **holding costs** (storage, capital tied up) by accurately forecasting future demand and automatically calculating the optimal **Reorder Point (ROP)** and **Reorder Quantity (ROQ)** for a portfolio of **100 unique, compound SKUs**.
 
-💾 Data Source
+---
+
+## 💾 Data & Licensing
+
+### Source Dataset
 
 The concepts and structure for this project are inspired by a real-world retail scenario.
 
-Source Dataset: Retail Store Inventory Forecasting Dataset
+| Metric | Detail |
+| :--- | :--- |
+| **Source Name** | Retail Store Inventory Forecasting Dataset |
+| **Kaggle Link** | [https://www.kaggle.com/datasets/anirudhchauhan/retail-store-inventory-forecasting-dataset](https://www.kaggle.com/datasets/anirudhchauhan/retail-store-inventory-forecasting-dataset) |
+| **Note** | The data displayed in the dashboard is a **simulated dataset** created in `app.py` using NumPy and Pandas to mimic the real-world structure for demonstration purposes. |
 
-Link: https://www.kaggle.com/datasets/anirudhchauhan/retail-store-inventory-forecasting-dataset
+### ⚖️ License
 
-Note: The data displayed in this dashboard is a simulated dataset created in the app.py script, leveraging NumPy and Pandas, to mimic the structure, time series demand, and key features (like stock levels and policies) of a large retail inventory portfolio for demonstration purposes.
+This project is licensed under the **MIT License**. This permissive license allows you to use, modify, distribute, and even sell the code, provided you include the original copyright and license notice.
 
-🛠️ Technology Stack
+---
 
-Component
+## 🛠️ Technology Stack
 
-Technology
+| Component | Technology | Purpose |
+| :--- | :--- | :--- |
+| **Dashboard** | Python / Streamlit | Interactive visualization and front-end for real-time decision-making. |
+| **Data Logic** | Python / Pandas / NumPy | Data simulation, cleaning, and policy calculation. |
+| **Forecasting** | **Prophet (from Meta)** | Time-series demand forecasting engine. |
+| **Deployment** | GitHub / Streamlit Cloud | Version control and hosting. |
 
-Purpose
+---
 
-Frontend/Dashboard
+## 📐 Project Architecture & Phases
 
-Python / Streamlit
+The system follows a standard data science pipeline:
 
-Interactive visualization and user interface for decision-makers.
+| Phase | Title | Key Activities |
+| :--- | :--- | :--- |
+| **Phase 1** | **Data Simulation & Engineering** | Generate 100 compound SKUs (`S001_P00xx`), 180 days of historical demand, and initial policy/status data (`df_status`, `df_policies`). |
+| **Phase 2** | **Predictive Modeling (Prophet)** | Fit the Prophet model to historical demand for each SKU, generating a **30-day forward forecast** including confidence intervals (`yhat_upper`, `yhat_lower`). |
+| **Phase 3** | **Inventory Policy Optimization** | Calculate the **Dynamic ROP** (based on lead time demand & confidence interval) and **Dynamic ROQ** (optimal lot size) for each SKU. |
+| **Phase 4** | **Dashboard Deployment** | Ingest final calculated policies and status into the **Streamlit application** (`app.py`) for visualization and actionable insights. |
 
-Data Processing
+---
 
-Python / Pandas
+## 🧠 Why the Prophet Model?
 
-Data simulation, cleaning, and preparation.
+Prophet was chosen as the primary forecasting tool for inventory demand due to its business-friendly features:
 
-Forecasting Model
+| Rationale | Description |
+| :--- | :--- |
+| **Seasonality & Holidays** | Designed to automatically detect and model weekly, monthly, or yearly demand patterns, critical in retail. |
+| **Robustness** | Highly tolerant of missing data and outliers, which are common in real-world sales logs. |
+| **Safety Stock** | Natively provides **forecast uncertainty** (confidence intervals), which are statistically essential inputs for calculating Safety Stock and the Dynamic ROP. |
+| **Intuitive** | Uses parameters that are easily understood by inventory managers, facilitating buy-in and operation. |
 
-Prophet (from Meta)
+---
 
-Time-series demand forecasting engine.
+## 📊 Streamlit Dashboard Features
 
-Deployment
+The dashboard provides a real-time, filtered view of the inventory portfolio:
 
-GitHub / Streamlit Cloud
+### Portfolio Health Check
 
-Version control and hosting.
+* **Filters**: View portfolio status by **Product Category** (Toys, Clothing, Furniture, Electronics).
+* **KPIs**: Displays metrics like **Critical Stock SKUs**, **Total Inventory Value**, and **Average Dynamic Policy Savings**.
+* **Status Distribution**: A chart visualizing the number of SKUs in **Healthy**, **Low**, or **Critical** stock status.
 
-📐 Project Architecture & Phases
+### Real-Time Demand Forecast
 
-The system follows a standard data science pipeline, from data generation to deployment:
+* **Interactive Chart**: Displays 180 days of history and the **30-day Prophet forecast** with its 95% confidence interval, showing expected demand and volatility for the selected SKU.
 
-Phase 1: Data Simulation and Engineering
+### Policy Comparison & Recommendation
 
-A robust dataset is simulated using Pandas and NumPy to mimic real-world inventory data, featuring 100 products using a compound SKU format (e.g., S001_P00xx).
+* **Cost Savings**: Highlights the monetary and percentage reduction achieved by adopting the **Dynamic Policy**.
+* **Reorder Parameters**: Compares **Static ROP** vs. **Dynamic ROP** and provides the precise **Recommended Order Quantity (ROQ)**.
+* **Action Block**: Provides clear, immediate instruction (e.g., "IMMEDIATE ACTION REQUIRED") if current stock falls below the Dynamic ROP.
 
-df_status: Current stock levels, safety stock targets, and an immediate status flag (Healthy, Low, Critical).
+---
 
-df_policies: Historical cost data for policy comparison.
-
-Time Series Data: 180 days of historical demand data for each SKU is generated for the forecasting model.
-
-Phase 2: Predictive Modeling (Prophet)
-
-The raw time-series demand data for each of the 100 SKUs is fed into the Prophet model.
-
-Prophet generates a 30-day forward forecast (yhat).
-
-It also provides statistically derived upper and lower bounds for the forecast (yhat_upper, yhat_lower), which are crucial for safety stock calculations.
-
-Phase 3: Inventory Policy Optimization
-
-Using the probabilistic output from the Prophet model, the system calculates two critical inventory parameters for each SKU:
-
-Dynamic Reorder Point (ROP): Calculated based on the forecasted demand during lead time and the desired service level (using the confidence interval from Prophet). This dynamically adjusts to demand volatility.
-
-Dynamic Reorder Quantity (ROQ): Calculated based on optimal lot size models, ensuring the order quantity minimizes the combined cost of ordering and holding.
-
-Phase 4: Dashboard Deployment and Visualization
-
-The final policy and status data are ingested by the Streamlit application (app.py), which presents actionable insights to the user via a live, interactive dashboard.
-
-🧠 Why the Prophet Model?
-
-Prophet was chosen as the primary forecasting model for inventory demand due to its specific advantages in a business context:
-
-Rationale
-
-Description
-
-Seasonality & Holidays
-
-Prophet is explicitly designed to detect and model human-driven patterns, such as weekly, monthly, or yearly seasonality, without manual intervention.
-
-Robust to Missing Data
-
-Unlike traditional ARIMA models, Prophet handles gaps in the time series data (common in sales/inventory) and outliers gracefully.
-
-Intuitive Parameters
-
-The model's parameters (e.g., trend change points, seasonality modes) are easily understandable and configurable by non-statisticians (like inventory managers).
-
-Confidence Intervals
-
-Prophet natively provides forecast uncertainty (confidence intervals), which are essential inputs for calculating the statistical Safety Stock needed to meet a specific service level goal.
-
-📊 Streamlit Dashboard Features
-
-The dashboard provides a real-time, filtered view of the inventory portfolio, driven by the data generated in the back-end phases.
-
-1. Portfolio Health Check
-
-Filters: Allows filtering the entire view by Product Category (Toys, Clothing, Furniture, Electronics).
-
-KPIs: Displays high-level metrics like Critical Stock SKUs, Total Inventory Value, and Average Dynamic Policy Savings.
-
-Status Distribution: A bar chart visualizing the number of SKUs in Healthy, Low, or Critical stock status across the filtered portfolio.
-
-2. Real-Time Demand Forecast
-
-Interactive Chart: Displays the SKU-specific demand over the last 180 days of history, transitioning seamlessly into the 30-day Prophet forecast with its associated 95% confidence interval. This clearly shows expected demand and potential volatility.
-
-3. Policy Comparison & Recommendation
-
-Cost Savings: Highlights the monetary and percentage reduction in total inventory costs achieved by switching from the static to the Dynamic Policy.
-
-Reorder Parameters: Compares the old Static ROP vs. the new Dynamic ROP and provides the Recommended Order Quantity (ROQ).
-
-Action Block: A clear, immediate instruction (e.g., "IMMEDIATE ACTION REQUIRED") is displayed if the current stock falls below the calculated Dynamic ROP, alongside the recommended ROQ.
-
-Cost Performance Chart: A bar chart comparing the average static vs. dynamic total inventory costs across the filtered category.
-
-💻 Installation and Setup
+## 💻 Installation and Setup
 
 To run this dashboard locally, follow these steps:
 
-Clone the repository:
-
-git clone [(https://github.com/Brendatracy-miriti/Inventory_reorder_system)]
-cd Inventory_dashboard
-
-
-Create a virtual environment (Recommended):
-
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\\Scripts\\activate
-Install dependencies:You will need streamlit, pandas, numpy, and plotly.pip install streamlit pandas numpy plotly
-Run the application:streamlit run app.py
-The application will open automatically in your browser, typically at http://localhost:8501.
+| Step | Command / Detail |
+| :--- | :--- |
+| **1. Clone Repository** | `git clone https://github.com/Brendatracy-miriti/Inventory_reorder_system.git` |
+| | `cd Inventory_dashboard` |
+| **2. Create Environment** | `python -m venv venv` |
+| | `source venv/bin/activate` (Use `venv\Scripts\activate` on Windows) |
+| **3. Install Dependencies** | `pip install streamlit pandas numpy plotly` |
+| **4. Run Application** | `streamlit run app.py` |
+| **Result** | The application opens automatically in your browser at `http://localhost:8501`. |
