@@ -16,13 +16,7 @@
 #! pip install statsmodels
 
 
-# In[202]:
-
-
-from statsmodels.tsa.statespace.sarimax import SARIMAX
-
-
-# In[203]:
+# In[260]:
 
 
 import numpy as np
@@ -32,25 +26,24 @@ import seaborn as sns
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error, mean_absolute_percentage_error
-from sklearn.ensemble import RandomForestRegressor
 from prophet import Prophet
-
+from prophet.diagnostics import cross_validation, performance_metrics
 from statsmodels.tsa.seasonal import seasonal_decompose
+
 
 import time
 import warnings
 warnings.filterwarnings("ignore")
 
 
-# In[204]:
+# In[268]:
 
 
 data = pd.read_csv('retail_store_inventory.csv')
 data.head()
 
 
-# In[205]:
+# In[269]:
 
 
 #check the columns and data types
@@ -59,7 +52,7 @@ data.info()
 
 # - No missing values in my data
 
-# In[206]:
+# In[270]:
 
 
 data.columns
@@ -67,7 +60,7 @@ data.columns
 
 # # 2. EDA
 
-# In[207]:
+# In[271]:
 
 
 # Convert 'Date' to datetime and create 'SKU_Compound_ID'
@@ -75,13 +68,13 @@ data['Date'] = pd.to_datetime(data['Date'])
 data['SKU_Compound_ID'] = data['Store ID'] + '_'+ data['Product ID']
 
 
-# In[208]:
+# In[272]:
 
 
 data.sort_values(by = ['SKU_Compound_ID', 'Date'], inplace=True)
 
 
-# In[209]:
+# In[273]:
 
 
 # Define Inventory Constants
@@ -104,7 +97,7 @@ LEAD_TIME_DAYS = 7  # Standard  lead time in days
 # 
 #   So, a Z = 1.645 gives a 95% confidence that demand during lead time will be covered.
 
-# In[210]:
+# In[274]:
 
 
 # Add daily Holding Cost to base data for cost calculations
@@ -113,7 +106,7 @@ data['Daily_Holding_Cost'] = HOLDING_COST_PER_UNIT_YEAR / DAYS_IN_YEAR
 
 # Check for seasonality on aggregate demand
 
-# In[211]:
+# In[275]:
 
 
 #Aggregate daily demand across all SKUs to check for seasonality
@@ -121,7 +114,7 @@ daily_demand = data.groupby('Date')['Units Sold'].sum().reset_index()
 daily_demand = daily_demand.set_index('Date').asfreq('D')
 
 
-# In[212]:
+# In[276]:
 
 
 # Plotting the aggregated demand over time
@@ -134,7 +127,7 @@ plt.grid(True)
 plt.show()
 
 
-# In[213]:
+# In[277]:
 
 
 # Decompose the time series (Additive model assumed for demand) Model uses daily data, so a period of 7 (weekly seasonality) is appropriate.
@@ -179,7 +172,7 @@ except Exception as e:
 
 # 3.1 Prepare Data and Train Prophet
 
-# In[214]:
+# In[278]:
 
 
 #We need 'Date' (as 'ds') and 'Units Sold' (as 'y').
@@ -188,85 +181,153 @@ prophet_data.rename(columns={'Date': 'ds', 'Units Sold': 'y'}, inplace=True)
 prophet_data.head()
 
 
-# In[215]:
+# In[280]:
 
 
 # PREPARE SKUs FOR FORECASTING
 SKU_LIST = prophet_data['SKU_Compound_ID'].unique()
-forecast_results_list = []
 
 
-# In[216]:
+# In[281]:
 
 
 print(f"Starting Prophet training for {len(SKU_LIST)} SKUs...")
+
+# Existing list for ROP/volatility inputs
+forecast_results_list = [] 
+
+# === NEW LIST: This will hold the full time-series forecasts for the dashboard ===
+all_forecasts_time_series_list = [] 
+# =================================================================================
 
 for sku_id in SKU_LIST:
     # Filter training data for the current SKU
     sku_train_data = prophet_data[prophet_data['SKU_Compound_ID'] == sku_id].drop(columns=['SKU_Compound_ID'])
     
-    SERVICE_LEVEL_Z = SERVICE_LEVEL  # Z-score for desired service level (e.g., 1.645 for 95%)
-    # Initialize Prophet: Automatically handles Yearly and Weekly seasonality
+    SERVICE_LEVEL_Z = SERVICE_LEVEL
     model = Prophet(
         yearly_seasonality=True, 
         weekly_seasonality=True, 
         daily_seasonality=False,
-        interval_width=0.95 # Sets 95% confidence interval for volatility estimate
+        interval_width=0.95 
     )
     
     model.fit(sku_train_data)
     
-    # Create future dataframe for forecasting (Lead Time days ahead)
+    # Create future dataframe for forecasting
     future = model.make_future_dataframe(periods=LEAD_TIME_DAYS, include_history=False)
     
     # Generate the forecast
     forecast = model.predict(future)
     
-    # --- Extracting Key Metrics for Inventory ---
+    # === NEW: Aggregate the full time-series forecast for the dashboard ===
+    forecast['SKU_Compound_ID'] = sku_id
+    all_forecasts_time_series_list.append(
+        forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper', 'SKU_Compound_ID']]
+    )
     
+    # --- ROP/Volatility Extraction ---
     # 1. Mean Demand during Lead Time (DL)
     mean_demand_lead_time = forecast['yhat'].sum()
     
     # 2. Demand Variability (Sigma_L)
-    # Sigma is derived from the confidence interval (yhat_upper - yhat_lower)
-    # We use the mean range over the lead time as the proxy for the standard deviation of the forecast error.
-    # CI width = 2 * Z * Sigma. Here, Z=1.96 for 95%.
-    
     forecast['sigma_daily'] = (forecast['yhat_upper'] - forecast['yhat_lower']) / (2 * 1.96)
-    
-    # Total Sigma over Lead Time is calculated using the final day's sigma and the square root of L
     sigma_L = forecast['sigma_daily'].iloc[-1] * np.sqrt(LEAD_TIME_DAYS)
     
-    # Append results
+    # Append results to existing list
     forecast_results_list.append({
         'SKU_Compound_ID': sku_id,
         'Mean_Demand_Lead_Time': max(0, mean_demand_lead_time), 
         'Last_Observed_Sigma': max(0.1, sigma_L) 
     })
 
-# Final DataFrame for optimization
+
+# Final DataFrame for optimization (Your existing ROP components)
 future_forecast_data = pd.DataFrame(forecast_results_list)
 future_forecast_data['Service_Level_Z'] = SERVICE_LEVEL_Z
 future_forecast_data['Lead_Time_Days'] = LEAD_TIME_DAYS
 
+# === NEW DATAFRAME: The Time-Series Forecast Data for the Dashboard ===
+df_time_series_forecast = pd.concat(all_forecasts_time_series_list, ignore_index=True) 
+# =======================================================================
+
 print("\nProphet Forecasting complete.")
-print("The demand and volatility inputs are now much more stable.")
-print(future_forecast_data.head())
+print("The time-series forecast data is now saved in 'df_time_series_forecast'.")
+
+
+# In[282]:
+
+
+# Prepare historical data for the dashboard
+historical_data = data[['Date', 'SKU_Compound_ID', 'Units Sold']].rename(
+    columns={'Units Sold': 'Historical_Demand', 'SKU_Compound_ID': 'SKU'}
+)
+
+
+# In[283]:
+
+
+# Prepare forecast data with Prophet output columns
+forecast_data = df_time_series_forecast.rename(
+    columns={
+        'ds': 'Date', 
+        'yhat': 'Forecast', 
+        'yhat_lower': 'Forecast_Lower', 
+        'yhat_upper': 'Forecast_Upper', 
+        'SKU_Compound_ID': 'SKU'
+    }
+)[['Date', 'SKU', 'Forecast', 'Forecast_Lower', 'Forecast_Upper']]
 
 
 # In[ ]:
 
 
+# Merge historical data (inner join for overlap) and append pure forecast data (outer join)
+df_historical_forecast = pd.merge(
+    historical_data,
+    forecast_data,
+    on=['Date', 'SKU'],
+    how='outer' 
+).sort_values(by=['SKU', 'Date']).reset_index(drop=True)
+
+df_historical_forecast = df_historical_forecast[['Date', 'SKU', 'Historical_Demand', 'Forecast', 'Forecast_Lower', 'Forecast_Upper']]
 
 
+# In[317]:
 
-# In[217]:
+
+# Select one SKU for visualization
+SKU_TO_PLOT = 'S001_P0001' 
+df_plot = df_historical_forecast[df_historical_forecast['SKU'] == SKU_TO_PLOT].copy()
+
+# Ensure 'Date' is datetime for plotting
+df_plot['Date'] = pd.to_datetime(df_plot['Date'])
+
+plt.figure(figsize=(14, 6))
+sns.lineplot(data=df_plot, x='Date', y='Historical_Demand', label='Historical Demand', color='darkblue')
+sns.lineplot(data=df_plot, x='Date', y='Forecast', label='Prophet Forecast', color='red', linestyle='--')
+
+# Add the confidence interval (Forecast_Lower/Upper)
+plt.fill_between(
+    df_plot['Date'],
+    df_plot['Forecast_Lower'],
+    df_plot['Forecast_Upper'],
+    color='red',
+    alpha=0.2,
+    label='95% Confidence Interval'
+)
+
+plt.title(f'Demand Forecast vs. History for SKU: {SKU_TO_PLOT}')
+plt.xlabel('Date')
+plt.ylabel('Units')
+plt.legend()
+plt.grid(axis='y', linestyle='--', alpha=0.7)
+plt.tight_layout()
+plt.savefig('visual_forecast_vs_history.png')
+plt.show()
 
 
-# Save for Optimization phase
-future_forecast_data.to_csv("future_forecast_data.csv", index=False)
-print("\n✅ Saved future_forecast_data.csv — ready for optimization input.")
-
+# 
 
 # # 4. Inventory Optimization and Cost simulation
 
@@ -274,76 +335,50 @@ print("\n✅ Saved future_forecast_data.csv — ready for optimization input.")
 # 
 #  Here we calculate the dynamic policy(ROP/ROQ) and prepare data for simulation
 
-# DYNAMIC POLICY 
-
-# In[218]:
+# In[ ]:
 
 
-# Safety stock(SS)
-future_forecast_data['Safety_Stock'] = future_forecast_data['Service_Level_Z'] * future_forecast_data['Last_Observed_Sigma'].round(0)
+# INVENTORY POLICY CALCULATION (Defines df_inventory_policies) 
 
+# 1. Prepare data with Annual Demand (D_annual) for EOQ calculation
+avg_daily_demand = data.groupby('SKU_Compound_ID')['Units Sold'].mean().reset_index()
+avg_daily_demand['Annual_Demand'] = avg_daily_demand['Units Sold'] * DAYS_IN_YEAR
 
-# In[219]:
+policy_data = future_forecast_data.merge(
+    avg_daily_demand[['SKU_Compound_ID', 'Annual_Demand']],
+    on='SKU_Compound_ID',
+    how='left'
+)
 
+# --- Dynamic Policy Calculations ---
+# ROP Dynamic = Mean Demand Lead Time + Z * Sigma Lead Time
+policy_data['Dynamic_ROP'] = (
+    policy_data['Mean_Demand_Lead_Time'] + 
+    policy_data['Service_Level_Z'] * policy_data['Last_Observed_Sigma']
+).round(0)
 
-# Reorder Point (ROP)
-future_forecast_data['Dynamic_ROP'] = future_forecast_data['Mean_Demand_Lead_Time'] + future_forecast_data['Safety_Stock'].round(0)
+# ROQ Dynamic (EOQ Formula)
+policy_data['Dynamic_ROQ'] = np.sqrt(
+    (2 * ORDERING_COST * policy_data['Annual_Demand']) / HOLDING_COST_PER_UNIT_YEAR
+).round(0)
 
+# --- Static Policy Calculations ---
+# 1. Static ROP: Calculate based on historical average demand plus a simple, fixed safety stock rule.
+avg_daily_std = data['Units Sold'].std() # Use overall historical volatility
+policy_data['Static_ROP'] = (
+    policy_data['Annual_Demand'] / DAYS_IN_YEAR * policy_data['Lead_Time_Days'] +
+    2 * avg_daily_std # Example: 2 standard deviations of demand as safety stock
+).round(0)
 
-# In[220]:
+# 2. Static ROQ: Set equal to the baseline EOQ calculated above.
+policy_data['Static_ROQ'] = policy_data['Dynamic_ROQ']
 
+# Final DataFrame needed for Script 2
+df_inventory_policies = policy_data[[
+    'SKU_Compound_ID', 'Static_ROP', 'Dynamic_ROP', 'Static_ROQ', 'Dynamic_ROQ'
+]]
 
-# Reorder Quantity (ROQ) using EOQ formula
-# Annual Demand(D_Annual) from Lead Time demand
-future_forecast_data['Estimated_Annual_Demand'] = (future_forecast_data['Mean_Demand_Lead_Time'] * (DAYS_IN_YEAR / future_forecast_data['Lead_Time_Days']))
-future_forecast_data['Dynamic_ROQ'] = np.sqrt((2 * future_forecast_data['Estimated_Annual_Demand'] * ORDERING_COST) / HOLDING_COST_PER_UNIT_YEAR)
-future_forecast_data['Dynamic_ROQ'] = future_forecast_data['Dynamic_ROQ'].round(0)
-
-
-# STATIC POLICY(for comparison)
-
-# In[221]:
-
-
-# Static ROP/ROQ based on historical average demand
-static_baseline = data.groupby('SKU_Compound_ID')['Units Sold'].mean().reset_index()
-static_baseline.rename(columns={'Units Sold': 'Avg_Daily_Demand'}, inplace=True)
-
-
-# In[222]:
-
-
-print(future_forecast_data.columns.tolist())
-print(static_baseline.columns.tolist())
-
-
-# In[223]:
-
-
-# Static ROP = Static Daily Mean * Lead Time
-future_forecast_data = future_forecast_data.merge(static_baseline, on='SKU_Compound_ID', how='left')
-future_forecast_data['Static_ROP'] = (future_forecast_data['Avg_Daily_Demand'] * LEAD_TIME_DAYS).round(0)
-
-
-# In[224]:
-
-
-# Static ROQ is set to 60 days of average demand (a common rule-of-thumb)
-future_forecast_data['Static_ROQ'] = (future_forecast_data['Avg_Daily_Demand'] * 60).round(0)
-
-
-# In[225]:
-
-
-# Policy Calculation Output
-future_forecast_data[['SKU_Compound_ID', 'Dynamic_ROP', 'Dynamic_ROQ', 'Static_ROP', 'Static_ROQ']]
-
-
-# In[226]:
-
-
-# Simple check to see if ROQ/ROP values look reasonable
-future_forecast_data[['SKU_Compound_ID', 'Dynamic_ROP', 'Dynamic_ROQ', 'Static_ROP', 'Static_ROQ']].describe()
+print("df_inventory_policies created successfully.")
 
 
 # ### INSIGHTS 
@@ -361,7 +396,7 @@ future_forecast_data[['SKU_Compound_ID', 'Dynamic_ROP', 'Dynamic_ROQ', 'Static_R
 # 
 # Therefore shifting dynamic ROP/ROQ could significantly reduce excess stock while maintaining service levels.
 
-# In[227]:
+# In[295]:
 
 
 # Confirm the actual ratio between Static and Dynamic ROQ
@@ -369,38 +404,7 @@ future_forecast_data['ROQ_ratio'] = future_forecast_data['Static_ROQ'] / future_
 future_forecast_data[['Static_ROQ', 'Dynamic_ROQ', 'ROQ_ratio']].describe()
 
 
-# The mean confirms that Static ROQ is 8x higher and the ROQ ratio hows  it is clearly overstocking
-
-# In[228]:
-
-
-# Visualize the differences between Static and Dynamic ROQ
-plt.figure(figsize=(7,6))
-plt.scatter(future_forecast_data['Dynamic_ROQ'], future_forecast_data['Static_ROQ'], alpha=0.7)
-plt.plot([0, future_forecast_data['Static_ROQ'].max()], [0, future_forecast_data['Static_ROQ'].max()], 'r--', label='1:1 Line')
-plt.xlabel('Dynamic ROQ')
-plt.ylabel('Static ROQ')
-plt.title('Static vs Dynamic ROQ per SKU')
-plt.legend()
-plt.show()
-
-
-# We can see that most dots lie above the 1:1 line which means Static ROQ is always higher  hence clear overstocking.
-
-# In[229]:
-
-
-# Identify Top 10 Overstocked SKUs based on Static vs Dynamic ROQ
-future_forecast_data['Overstock_Factor'] = (future_forecast_data['Static_ROQ'] - future_forecast_data['Dynamic_ROQ']) / future_forecast_data['Dynamic_ROQ']
-
-top_overstocked = future_forecast_data.sort_values('Overstock_Factor', ascending=False).head(10)
-top_overstocked[['SKU_Compound_ID', 'Static_ROQ', 'Dynamic_ROQ', 'Overstock_Factor']]
-
-
-
-# Overstock_Factor is 7.0 which means Static Policy orders 700% ore than needed.
-
-# In[230]:
+# In[298]:
 
 
 # Merge policy data to main historical data for simulation
@@ -410,22 +414,16 @@ cost_summary_data = future_forecast_data[['SKU_Compound_ID', 'Estimated_Annual_D
 cost_summary_data['Daily_Holding_Cost'] = HOLDING_COST_PER_UNIT_YEAR / DAYS_IN_YEAR
 
 
-# In[231]:
+# In[299]:
 
 
 sim_data = pd.merge(data, cost_summary_data.drop(columns=['Estimated_Annual_Demand','Safety_Stock']), 
                     on='SKU_Compound_ID', how='left')
 
 
-# In[232]:
-
-
-print(sim_data.columns.tolist())
-
-
 # 4.2 Cost Simulation
 
-# In[ ]:
+# In[308]:
 
 
 def calculate_total_cost(data_summary, data_sim, ROQ_col):
@@ -514,106 +512,163 @@ print(f"Cost Reduction: {savings / cost_static * 100:.2f}%") # In percentage
 # Insight: The costs are now in the tens of millions, and the Dynamic Policy shows a positive cost reduction, primarily due to lower Holding Cost or Stockout Cost. 
 # 
 
-# In[236]:
+# In[309]:
 
 
-# Cost Breakdown Comparison
+# COST AGGREGATION 
+
 cost_data = {
-    'Policy': ['Static', 'Dynamic'],
-    'Ordering Cost (S)': [ord_s, ord_d],
-    'Holding Cost (H)': [hold_s, hold_d],
-    'Stockout Cost (C)': [stock_s, stock_d],
-    'Total Cost': [cost_static, cost_dynamic]
+ 'Policy': ['Static', 'Dynamic'],
+ 'Ordering Cost': [ord_s, ord_d],      
+ 'Holding Cost': [hold_s, hold_d],     
+ 'Stockout Cost': [stock_s, stock_d],   
+ 'Total Cost': [cost_static, cost_dynamic]
 }
 
 df_costs = pd.DataFrame(cost_data)
 
-# Melt the DataFrame to long format for easy plotting with seaborn or matplotlib
-df_costs_melt = df_costs.set_index('Policy').drop(columns='Total Cost').T.reset_index()
-df_costs_melt.rename(columns={'index': 'Cost Component'}, inplace=True)
-
-print("Cost Data Prepared for Plotting (Melted):\n")
-print(df_costs_melt)
+print("df_costs created successfully.")
 
 
-# In[247]:
+# In[315]:
 
 
-# ENHANCED VISUALIZATION WITH TOTAL COST LINES AND SAVINGS ANNOTATION
-cost_data = {
-    'Policy': ['Static', 'Dynamic'],
-    'Ordering Cost (S)': [ord_s, ord_d],
-    'Holding Cost (H)': [hold_s, hold_d],
-    'Stockout Cost (C)': [stock_s, stock_d],
-    'Total Cost': [cost_static, cost_dynamic]
-}
-df_costs = pd.DataFrame(cost_data)
-df_costs_melt = df_costs.set_index('Policy').drop(columns='Total Cost').T.reset_index()
-df_costs_melt.rename(columns={'index': 'Cost Component'}, inplace=True)
+# Visualizing Aggregate Cost Comparison 
 
-# Prepare the data needed for the horizontal lines: three identical values
-static_total_line = [df_costs['Total Cost'].iloc[0]] * 3
-dynamic_total_line = [df_costs['Total Cost'].iloc[1]] * 3
-
-savings = cost_static - cost_dynamic
+# Reshape df_costs for easier plotting 
+df_costs_melted = df_costs.melt(
+    id_vars='Policy', 
+    value_vars=['Ordering Cost', 'Holding Cost', 'Stockout Cost'], 
+    var_name='Cost Type', 
+    value_name='Cost'
+)
 
 plt.figure(figsize=(10, 6))
-
-# Grouped bar chart for component comparison
 sns.barplot(
-    x='Cost Component', 
-    y='Static', 
-    data=df_costs_melt, 
-    color="#000CB6", 
-    label='Static Policy', 
-    alpha=0.7
-)
-sns.barplot(
-    x='Cost Component', 
-    y='Dynamic', 
-    data=df_costs_melt, 
-    color ="#E63CB3", 
-    label='Dynamic Policy', 
-    alpha=0.9
-)
-#  Add Total Cost Lines Plotting 3 points against 3 x-ticks
-plt.plot(
-    df_costs_melt['Cost Component'],  # X-axis (3 components)
-    static_total_line,              # Y-axis (3 identical values for the line)
-    color='#DC2626', 
-    linestyle='--', 
-    marker='o', 
-    markersize=8,
-    label=f'Static Total: ${cost_static:,.0f}'
-)
-plt.plot(
-    df_costs_melt['Cost Component'], 
-    dynamic_total_line, 
-    color='#16A34A', 
-    linestyle='--', 
-    marker='o', 
-    markersize=8,
-    label=f'Dynamic Total: ${cost_dynamic:,.0f}'
+    data=df_costs_melted, 
+    x='Policy', 
+    y='Cost', 
+    hue='Cost Type', 
+    palette='viridis'
 )
 
-# Add Savings Annotation
-plt.text(
-    0.5, 
-    df_costs['Total Cost'].max() * 0.9, 
-    f'Total Savings: ${savings:,.0f}\nCost Reduction: {savings / cost_static * 100:.2f}%', 
-    horizontalalignment='center', 
-    color='#16A34A', 
-    fontsize=14, 
-    bbox=dict(facecolor='white', alpha=0.8, boxstyle="round,pad=0.5")
-)
+# Add Total Cost comparison line
+cost_comparison = df_costs[['Policy', 'Total Cost']].set_index('Policy')
+plt.plot(cost_comparison.index, cost_comparison['Total Cost'], marker='o', color='red', linewidth=2, label='Total Cost')
 
-# Final cleanup
-plt.title('Cost Component Breakdown and Total Cost Comparison', fontsize=16, fontweight='bold')
-plt.ylabel('Annual Cost ($)', fontsize=12)
-plt.xlabel('Cost Component', fontsize=12)
+plt.title('Total Inventory Cost Breakdown: Static vs. Dynamic Policy')
+plt.xlabel('Inventory Policy')
+plt.ylabel('Total Annual Cost ($)')
 plt.legend(loc='upper right')
 plt.grid(axis='y', linestyle='--', alpha=0.6)
 plt.tight_layout()
+plt.savefig('visual_cost_comparison.png')
+plt.show()
+
+
+# In[312]:
+
+
+# Policy Comparison & Recommendation Output 
+
+# A. Per-SKU ROP/ROQ Recommendation & Comparison (for actionability)
+df_policy_comparison_sku = df_inventory_policies.rename(
+    columns={
+        'SKU_Compound_ID': 'SKU',
+        'Static_ROP': 'Static_Reorder_Point',
+        'Dynamic_ROP': 'Dynamic_Reorder_Point',
+        'Dynamic_ROQ': 'Recommended_Order_Qty'
+    }
+)[['SKU', 'Static_Reorder_Point', 'Dynamic_Reorder_Point', 'Recommended_Order_Qty']]
+
+# B. Aggregate Cost Comparison (for Executive Summary/Savings)
+cost_static_agg = df_costs[df_costs['Policy'] == 'Static']['Total Cost'].iloc[0]
+cost_dynamic_agg = df_costs[df_costs['Policy'] == 'Dynamic']['Total Cost'].iloc[0]
+
+# Calculate savings percentage
+savings_percentage_agg = ((cost_static_agg - cost_dynamic_agg) / cost_static_agg) * 100
+
+df_aggregate_cost_comparison = pd.DataFrame({
+    'Metric': ['Aggregate Total Cost Comparison'],
+    'Static_Total_Cost': [cost_static_agg.round(2)],
+    'Dynamic_Total_Cost': [cost_dynamic_agg.round(2)],
+    'Savings_Percentage': [f"{savings_percentage_agg.round(2)}%"]
+})
+
+print("DataFrame 2A (Per-SKU ROP/ROQ) and 2B (Aggregate Costs) created.")
+# print(df_policy_comparison_sku.head())
+# print(df_aggregate_cost_comparison)
+
+
+# In[318]:
+
+
+#  Current Status Data 
+
+# 1. Get the most recent stock level (Current_Stock)
+last_date = data['Date'].max()
+df_current_stock = data[data['Date'] == last_date].rename(
+    columns={'Inventory Level': 'Current_Stock', 'SKU_Compound_ID': 'SKU'}
+)[['SKU', 'Current_Stock']]
+
+# 2. Merge with Policy Data to get Dynamic_ROP
+df_status = pd.merge(
+    df_current_stock,
+    df_inventory_policies[['SKU_Compound_ID', 'Dynamic_ROP']].rename(columns={'SKU_Compound_ID': 'SKU'}),
+    on='SKU',
+    how='left'
+)
+
+# 3. Merge with ROP components (future_forecast_data) to get Mean_Demand_Lead_Time (Avg_LTD)
+df_status = pd.merge(
+    df_status,
+    future_forecast_data.rename(
+        columns={'SKU_Compound_ID': 'SKU', 'Mean_Demand_Lead_Time': 'Avg_LTD'}
+    )[['SKU', 'Avg_LTD']],
+    on='SKU',
+    how='left'
+)
+
+# 4. Calculate Dynamic Safety Stock
+# Safety Stock = Dynamic ROP - Mean Demand Lead Time
+df_status['Safety_Stock'] = (df_status['Dynamic_ROP'] - df_status['Avg_LTD']).round(0).astype(int)
+
+# 5. Determine Actionable Status
+def determine_status(row):
+    if row['Current_Stock'] <= row['Safety_Stock']:
+        return 'Critical Stock'
+    elif row['Current_Stock'] < row['Dynamic_ROP']:
+        return 'Low Stock (Reorder Now)'
+    else:
+        return 'Healthy Stock'
+
+df_status['Status'] = df_status.apply(determine_status, axis=1)
+
+# Final DataFrame structure (DataFrame 3)
+df_current_status = df_status[['SKU', 'Current_Stock', 'Safety_Stock', 'Status']]
+
+print("DataFrame 3: Current Status Data created.")
+print(df_current_status.head())
+
+
+# In[ ]:
+
+
+# Visualizing Current Inventory Status
+plt.figure(figsize=(8, 6))
+sns.countplot(
+    data=df_current_status, 
+    x='Status', 
+    order=['Healthy Stock', 'Low Stock (Reorder Now)', 'Critical Stock'],
+    palette={'Healthy Stock': 'green', 'Low Stock (Reorder Now)': 'orange', 'Critical Stock': 'red'}
+)
+
+plt.title('Current Inventory Portfolio Health Check')
+plt.xlabel('Inventory Status')
+plt.ylabel('Number of SKUs')
+plt.grid(axis='y', linestyle='--', alpha=0.7)
+plt.tight_layout()
+plt.savefig('visual_inventory_status.png')
 plt.show()
 
 
@@ -621,23 +676,21 @@ plt.show()
 # 
 # This shift results in a lower Total Cost while simultaneously improving inventory efficiency and maintaining service levels (low Stockout Cost).
 
+# In[319]:
+
+
+# Generate the dataframes for dashboard output
+df_time_series_forecast.head()
+
+
+# In[320]:
+
+
+df_inventory_policies.head()
+
+
 # In[ ]:
 
 
 get_ipython().system('jupyter nbconvert --to script inventory_reorder_system.ipynb')
 
-# ============================================================
-# MAIN FUNCTION TO RUN FORECAST + COST SIMULATION
-# ============================================================
-def run_inventory_forecast():
-    """
-    Runs the inventory forecast and simulation pipeline.
-    Returns forecast_df, cost_df, inventory_df
-    """
-    # --- Put your model logic here ---
-    # Example placeholders (replace with your actual notebook variables)
-    forecast_df = forecast_results_df  # e.g. your forecast output
-    cost_df = cost_summary_df          # e.g. your cost simulation results
-    inventory_df = inventory_status_df # e.g. your inventory tracking dataframe
-
-    return forecast_df, cost_df, inventory_df
