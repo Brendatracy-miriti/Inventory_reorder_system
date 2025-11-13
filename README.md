@@ -1,4 +1,4 @@
-Dynamic Inventory Management System
+**Dynamic Inventory Management System**
 
 🚀 Project Overview
 
