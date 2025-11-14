@@ -186,7 +186,7 @@ col4.metric("Service Level (Last Month)", "96.5%", delta="0.2%", delta_color="no
 st.markdown("---")
 
 # **Inventory Distribution Chart (Portfolio Level)**
-st.subheader(f"SKU Status Distribution for Portfolio: **{selected_category}**") 
+st.subheader(f"SKU Status Distribution: **{selected_category}**") 
 
 fig_status_dist = px.bar(
     df_filtered_status.groupby('Status').size().reset_index(name='Count'),

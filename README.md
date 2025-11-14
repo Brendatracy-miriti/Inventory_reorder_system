@@ -77,6 +77,8 @@ The dashboard provides a real-time, filtered view of the inventory portfolio:
 
 * **Interactive Chart**: Displays 180 days of history and the **30-day Prophet forecast** with its 95% confidence interval, showing expected demand and volatility for the selected SKU.
 
+
+
 ### Policy Comparison & Recommendation
 
 * **Cost Savings**: Highlights the monetary and percentage reduction achieved by adopting the **Dynamic Policy**.
