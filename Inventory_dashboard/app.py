@@ -93,11 +93,11 @@ master_inventory, historical_data = prepare_dashboard_data(master_inventory, his
 
 # ==================== SIDEBAR FILTERS ====================
 st.sidebar.image("https://img.icons8.com/fluency/96/warehouse.png", width=80)
-st.sidebar.title("🎛️ Dashboard Controls")
+st.sidebar.title(" Dashboard Controls")
 
 # Date selector
 today = datetime.now().date()
-st.sidebar.subheader("📅 Date Range")
+st.sidebar.subheader(" Date Range")
 date_range = st.sidebar.date_input(
     "Select Period",
     value=(today - timedelta(days=30), today),
@@ -105,7 +105,7 @@ date_range = st.sidebar.date_input(
 )
 
 # Category filter
-st.sidebar.subheader("📊 Filters")
+st.sidebar.subheader(" Filters")
 categories = ['All Categories'] + sorted(master_inventory['Category'].unique().tolist())
 selected_category = st.sidebar.selectbox("Category", categories)
 
@@ -129,12 +129,12 @@ if show_reorder_only:
     filtered_data = filtered_data[filtered_data['Reorder_Needed'] == True]
 
 st.sidebar.markdown("---")
-st.sidebar.info(f"📦 **{len(filtered_data)}** SKUs displayed")
+st.sidebar.info(f" **{len(filtered_data)}** SKUs displayed")
 
 # ==================== MAIN DASHBOARD ====================
 
 # Header
-st.markdown('<p class="main-header">📦 Inventory Reorder Management System</p>', unsafe_allow_html=True)
+st.markdown('<p class="main-header"> Inventory Reorder Management System</p>', unsafe_allow_html=True)
 st.markdown(f"**Last Updated:** {datetime.now().strftime('%B %d, %Y at %I:%M %p')}")
 
 # ==================== KEY METRICS ROW ====================
@@ -300,7 +300,7 @@ st.markdown("---")
 col1, col2 = st.columns(2)
 
 with col1:
-    st.markdown("### 📦 Category Performance")
+    st.markdown("### Category Performance")
     
     category_summary = filtered_data.groupby('Category').agg({
         'SKU_ID': 'count',
@@ -323,7 +323,7 @@ with col1:
     st.plotly_chart(fig_category, use_container_width=True)
 
 with col2:
-    st.markdown("### 💰 Inventory Cost Analysis")
+    st.markdown("###  Inventory Cost Analysis")
     
     fig_cost = px.scatter(
         filtered_data,
@@ -371,25 +371,43 @@ if selected_sku:
         st.metric("Annual Cost", f"${sku_data['Annual_Inventory_Cost']:,.0f}")
     
     # Historical demand chart
-    sku_history = historical_data[historical_data['SKU_Compound_ID'] == selected_sku]
+    # Try to find SKU history - handle different possible column names
+    try:
+        # First, check what columns are available
+        possible_sku_cols = [col for col in historical_data.columns if 'sku' in col.lower() or 'compound' in col.lower()]
+        
+        if len(possible_sku_cols) > 0:
+            sku_col = possible_sku_cols[0]
+            sku_history = historical_data[historical_data[sku_col] == selected_sku]
+        else:
+            sku_history = pd.DataFrame()  # Empty if no matching column found
+    except Exception as e:
+        st.warning(f"Could not load historical data: {str(e)}")
+        sku_history = pd.DataFrame()
     
     if len(sku_history) > 0:
         st.markdown("#### 📈 Historical Demand Pattern")
         
-        daily_demand = sku_history.groupby('Date')['Units Sold'].sum().reset_index()
+        # Check what column name exists for units
+        units_col = 'Units Sold' if 'Units Sold' in sku_history.columns else (
+            'Units_Sold' if 'Units_Sold' in sku_history.columns else 'units_sold'
+        )
+        
+        daily_demand = sku_history.groupby('Date')[units_col].sum().reset_index()
+        daily_demand.columns = ['Date', 'Units_Sold']
         
         fig_history = go.Figure()
         
         fig_history.add_trace(go.Scatter(
             x=daily_demand['Date'],
-            y=daily_demand['Units Sold'],
+            y=daily_demand['Units_Sold'],
             mode='lines',
             name='Daily Demand',
             line=dict(color='blue')
         ))
         
         # Add average demand line
-        avg_demand = daily_demand['Units Sold'].mean()
+        avg_demand = daily_demand['Units_Sold'].mean()
         fig_history.add_hline(
             y=avg_demand,
             line_dash="dash",
