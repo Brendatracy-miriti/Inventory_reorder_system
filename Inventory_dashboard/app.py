@@ -2,332 +2,456 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import numpy as np
-import datetime
+from datetime import datetime, timedelta
 
-# --- Configuration ---
-# Setting a fixed current date for simulation consistency
-TODAY = datetime.date(2025, 11, 14) 
-
-st.set_page_config(layout="wide", page_title="Dynamic Inventory Management System", initial_sidebar_state="expanded")
-
-# --- 1. DATA LOADING AND CLEANING (SIMULATED FOR 100 SKUs) ---
-@st.cache_data
-def load_data():
-    # --- Simulation Parameters: Back to 100 SKUs / Single Store (S001) ---
-    N_SKUS = 100  # Total number of unique SKUs
-    
-    # Generate the 100 unique compound SKUs in the S001_PXXXX format
-    all_skus = [f'S001_P{i:04d}' for i in range(1, N_SKUS + 1)]
-    
-    # Assign categories equally (25 SKUs per category)
-    categories = (['Toys'] * 25) + (['Clothing'] * 25) + (['Furniture'] * 25) + (['Electronics'] * 25)
-    
-    # Check to ensure we have 100 entries for everything
-    if len(all_skus) != N_SKUS or len(categories) != N_SKUS:
-        st.error("Data generation error: Mismatched list lengths.")
-        st.stop()
-        
-    # Generate random data for 100 SKUs
-    current_stock_sim = np.random.randint(50, 500, N_SKUS)
-
-    # 1. Current Status Data (df_current_status)
-    df_status = pd.DataFrame({
-        'SKU': all_skus, # Represents SKU_Compound_ID (e.g., S001_P0001)
-        'Category': categories,
-        'Current_Stock': current_stock_sim,
-        'Safety_Stock': np.random.randint(400, 600, N_SKUS),
-        'Stock_Value': np.random.randint(500, 1500, N_SKUS) * 10,
-        'Status': np.select(
-            [
-                current_stock_sim < 150,
-                (current_stock_sim >= 150) & (current_stock_sim < 400)
-            ],
-            [
-                'Critical Stock', 
-                'Low Stock (Reorder Now)'
-            ],
-            default='Healthy Stock'
-        )
-    })
-    
-    # 2. Policy Comparison & Recommendation Output (df_policies)
-    df_policies = pd.DataFrame({
-        'SKU_Compound_ID': all_skus, 
-        'Category': categories,
-        'Static_Total_Cost': np.random.randint(100000, 300000, N_SKUS),
-        'Dynamic_Total_Cost': np.random.randint(50000, 150000, N_SKUS),
-        'Dynamic_ROP': np.random.randint(800, 1500, N_SKUS),
-        'Static_ROP': np.random.randint(800, 1500, N_SKUS),
-        'Dynamic_ROQ': np.random.randint(100, 500, N_SKUS)
-    })
-    df_policies['Cost_Savings'] = df_policies['Static_Total_Cost'] - df_policies['Dynamic_Total_Cost']
-    df_policies['Savings_Percentage'] = (df_policies['Cost_Savings'] / df_policies['Static_Total_Cost']) * 100
-    
-    # 3. Time Series Forecast Data (df_time_series_forecast)
-    FORECAST_DAYS = 30
-    all_forecast_data = []
-    
-    for sku in all_skus:
-        dates_history = pd.date_range(start=TODAY - datetime.timedelta(days=180), end=TODAY - datetime.timedelta(days=1), freq='D')
-        dates_future = pd.date_range(start=TODAY, periods=FORECAST_DAYS, freq='D')
-        
-        # History Data
-        df_history = pd.DataFrame({
-            'Date': dates_history,
-            'Forecast': np.random.randint(50, 400, len(dates_history)),
-            'SKU_Compound_ID': sku,
-            'Type': 'History'
-        })
-        
-        # Forecast Data
-        forecast_mean = np.random.randint(400, 600, FORECAST_DAYS)
-        df_future = pd.DataFrame({
-            'Date': dates_future,
-            'Forecast': forecast_mean,
-            'yhat_lower': forecast_mean * 0.9,
-            'yhat_upper': forecast_mean * 1.1,
-            'SKU_Compound_ID': sku,
-            'Type': 'Forecast'
-        })
-        all_forecast_data.append(pd.concat([df_history, df_future]))
-        
-    df_ts_plot = pd.concat(all_forecast_data)
-
-    return df_status, df_ts_plot, df_policies
-
-df_status, df_ts_plot, df_policies = load_data()
-
-
-# --- 2. STREAMLIT APP LAYOUT & FILTERS ---
-
-st.title("📈 Dynamic Inventory Management System")
-
-# --- SIDEBAR FOR INTERACTIVITY ---
-with st.sidebar:
-    st.header("Dashboard Filters")
-    
-    # ONLY Category Filter Remains (Store ID filter removed)
-    all_categories = ['All Categories'] + df_status['Category'].unique().tolist()
-    selected_category = st.selectbox(
-        "Filter by Product Category:",
-        options=all_categories,
-        index=0 
-    )
-
-    # Filter dataframes based ONLY on Category selection
-    df_filtered = df_status.copy()
-        
-    if selected_category != 'All Categories':
-        df_filtered = df_filtered[df_filtered['Category'] == selected_category]
-        
-    # Get the list of SKUs after filtering
-    filtered_skus = df_filtered['SKU'].unique()
-    
-    # 2. SKU Selector
-    if len(filtered_skus) > 0:
-        selected_sku = st.selectbox(
-            f"Select Specific SKU_Compound_ID ({len(filtered_skus)} available):",
-            options=filtered_skus,
-            index=0 
-        )
-    else:
-        selected_sku = None
-        st.warning("No SKUs match the current filter combination.")
-
-    st.markdown("---")
-    forecast_end = TODAY + datetime.timedelta(days=30)
-    st.info(f"Forecasting 📅 **{TODAY.strftime('%b %d, %Y')}** to **{forecast_end.strftime('%b %d, %Y')}**")
-
-
-# --- Main Data Filtering for Charts and KPIs ---
-
-if selected_sku is None:
-    st.stop() 
-
-# We use the filtered list of SKUs (filtered_skus) to filter all dataframes
-df_filtered_status = df_status[df_status['SKU'].isin(filtered_skus)]
-df_filtered_policies = df_policies[df_policies['SKU_Compound_ID'].isin(filtered_skus)]
-
-# Data for the single selected SKU
-if selected_sku in df_status['SKU'].values:
-    # Use 'SKU' column for df_status lookup
-    df_sku_status = df_status[df_status['SKU'] == selected_sku].iloc[0]
-    # Use 'SKU_Compound_ID' for df_policies and df_ts_plot lookups
-    df_sku_forecast = df_ts_plot[df_ts_plot['SKU_Compound_ID'] == selected_sku].copy()
-    df_sku_policy = df_policies[df_policies['SKU_Compound_ID'] == selected_sku].iloc[0]
-else:
-    st.error("Error retrieving data for selected SKU.")
-    st.stop()
-    
-# =================================================================
-# ## 1. Inventory Status Overview (Portfolio & SKU)
-# =================================================================
-st.header("1. Inventory Portfolio Health Check")
-
-col1, col2, col3, col4 = st.columns(4)
-
-# KPI 1: Total Stock-Outs
-critical_count = df_filtered_status[df_filtered_status['Status'] == 'Critical Stock'].shape[0]
-col1.metric("Critical Stock SKUs", f"{critical_count}", 
-            delta=f"{(critical_count / len(filtered_skus) * 100):.1f}% of SKUs", delta_color="inverse")
-
-# KPI 2: Total Inventory Value (Filtered Portfolio)
-total_value = df_filtered_status['Stock_Value'].sum()
-col2.metric(f"Total Value ({selected_category})", f"${total_value:,.0f}") 
-
-# KPI 3: Avg. Cost Savings (Filtered Portfolio)
-avg_savings = df_filtered_policies['Savings_Percentage'].mean()
-col3.metric("Avg. Dynamic Policy Savings", f"{avg_savings:,.1f}%")
-
-# KPI 4: Service Level (Simulated)
-col4.metric("Service Level (Last Month)", "96.5%", delta="0.2%", delta_color="normal")
-
-st.markdown("---")
-
-# **Inventory Distribution Chart (Portfolio Level)**
-st.subheader(f"SKU Status Distribution: **{selected_category}**") 
-
-fig_status_dist = px.bar(
-    df_filtered_status.groupby('Status').size().reset_index(name='Count'),
-    x='Status',
-    y='Count',
-    color='Status',
-    color_discrete_map={'Critical Stock': 'red', 'Low Stock (Reorder Now)': 'orange', 'Healthy Stock': 'green'},
-    text='Count'
-)
-fig_status_dist.update_layout(xaxis_title="", yaxis_title="Number of SKUs")
-st.plotly_chart(fig_status_dist, use_container_width=True)
-
-
-# =================================================================
-# ## 2. Demand Forecast & Visualization (Real-Time 30-Day View)
-# =================================================================
-st.header("2. Real-Time Demand Forecast Analysis")
-st.subheader(f"30-Day Forecast for **{selected_sku}**")
-# 
-
-# **Interactive Forecast Chart (History + 30-Day Prediction)**
-fig_forecast = go.Figure()
-
-# History
-df_history_plot = df_sku_forecast[df_sku_forecast['Type'] == 'History']
-fig_forecast.add_trace(go.Scatter(
-    x=df_history_plot['Date'],
-    y=df_history_plot['Forecast'],
-    mode='lines',
-    line=dict(color='darkblue', width=2),
-    name='Historical Demand'
-))
-
-# Confidence Interval (Shaded Area - Future Only)
-df_future_plot = df_sku_forecast[df_sku_forecast['Type'] == 'Forecast']
-fig_forecast.add_trace(go.Scatter(
-    x=df_future_plot['Date'],
-    y=df_future_plot['yhat_upper'],
-    line=dict(color='rgba(255, 0, 0, 0)'),
-    showlegend=False,
-    name='Upper Bound'
-))
-fig_forecast.add_trace(go.Scatter(
-    x=df_future_plot['Date'],
-    y=df_future_plot['yhat_lower'],
-    fill='tonexty',
-    fillcolor='rgba(255, 0, 0, 0.1)',
-    line=dict(color='rgba(255, 0, 0, 0)'),
-    name='95% CI'
-))
-
-# Prophet Forecast (Mean - Future Only)
-fig_forecast.add_trace(go.Scatter(
-    x=df_future_plot['Date'],
-    y=df_future_plot['Forecast'],
-    mode='lines',
-    line=dict(color='red', dash='dash', width=3),
-    name='30-Day Forecast'
-))
-
-# Vertical line for Current Date (Real-Time Demarcation)
-y_max = df_sku_forecast['Forecast'].max() * 1.1 
-fig_forecast.add_trace(go.Scatter(
-    x=[TODAY, TODAY], 
-    y=[0, y_max],
-    mode='lines',
-    line=dict(color='orange', dash='dot', width=2),
-    name='Today'
-))
-
-fig_forecast.update_layout(
-    title='Demand Trend: History vs. 30-Day Forecast',
-    xaxis_title='Date',
-    yaxis_title='Units',
-    hovermode="x unified",
-    height=500
+# ==================== PAGE CONFIGURATION ====================
+st.set_page_config(
+    layout="wide",
+    page_title="Inventory Reorder System",
+    page_icon="📦",
+    initial_sidebar_state="expanded"
 )
 
-st.plotly_chart(fig_forecast, use_container_width=True)
-
-
-# =================================================================
-# ## 3. Policy Comparison & Recommendation
-# =================================================================
-st.header("3. Dynamic vs. Static Policy Optimization")
-st.subheader(f"Cost & Reorder Analysis for **{selected_sku}**")
-
-# **Policy Comparison & Cost Savings KPI**
-total_static_cost = df_sku_policy['Static_Total_Cost']
-total_dynamic_cost = df_sku_policy['Dynamic_Total_Cost']
-cost_saving = df_sku_policy['Cost_Savings']
-saving_pct = df_sku_policy['Savings_Percentage']
-
-st.metric("Estimated Cost Savings with Dynamic Policy", f"${cost_saving:,.0f}", 
-          delta=f"{saving_pct:,.1f}% Reduction in Total Cost")
-
-col_rec1, col_rec2, col_rec3 = st.columns(3)
-
-# Reorder Recommendation
-reorder_qty = df_sku_policy['Dynamic_ROQ']
-col_rec1.metric("Recommended Order Quantity (ROQ)", f"{int(reorder_qty)} Units")
-
-# Dynamic vs Static ROP
-dynamic_rop = df_sku_policy['Dynamic_ROP']
-static_rop = df_sku_policy['Static_ROP']
-col_rec2.metric("Dynamic Reorder Point (ROP)", f"{int(dynamic_rop)} Units")
-col_rec3.metric("Static Reorder Point (ROP)", f"{int(static_rop)} Units", 
-                delta=f"{int(dynamic_rop - static_rop)} Unit Difference", delta_color="off")
-
-# **Recommendation Action Block**
-current_stock = df_sku_status['Current_Stock']
-if current_stock < dynamic_rop:
-    st.error(f"⚠️ **IMMEDIATE ACTION REQUIRED:** Current Stock (**{current_stock}**) is below the Dynamic ROP (**{int(dynamic_rop)}**). Place a PO for **{int(reorder_qty)}** units.")
-else:
-    st.success(f"✅ **Stock is Healthy:** Current Stock (**{current_stock}**) is above the Dynamic ROP (**{int(dynamic_rop)}**). No immediate action needed.")
-
-st.markdown("---")
-
-# **Cost Savings by Category (Bar Chart)**
-st.subheader(f"Policy Performance: Average for Portfolio: {selected_category}") 
-
-avg_costs = df_filtered_policies[['Static_Total_Cost', 'Dynamic_Total_Cost']].mean().reset_index()
-avg_costs.columns = ['Policy', 'Average Cost']
-avg_costs['Policy'] = avg_costs['Policy'].str.replace('_Total_Cost', '')
-
-fig_avg_costs = px.bar(
-    avg_costs,
-    x='Policy',
-    y='Average Cost',
-    title='Average Total Inventory Cost Comparison (Filtered Portfolio)',
-    color='Policy',
-    color_discrete_map={'Static': '#395A8D', 'Dynamic': '#0E8388'},
-    text='Average Cost'
-)
-fig_avg_costs.update_traces(texttemplate='$%{y:,.0f}', textposition='outside')
-fig_avg_costs.update_layout(yaxis_title='Average Total Annual Cost ($)')
-st.plotly_chart(fig_avg_costs, use_container_width=True)
-
+# ==================== CUSTOM CSS ====================
 st.markdown("""
-<hr>
-<p style='text-align:center; color:gray'>
-Built by <b>Tracy Miriti</b> | Streamlit + Plotly | Dynamic Inventory Management System
-</p>
+<style>
+    .main-header {font-size: 2.5rem; font-weight: bold; color: #1f77b4; text-align: center; margin-bottom: 1rem;}
+    .sub-header {font-size: 1.2rem; color: #555; margin-bottom: 0.5rem;}
+    .metric-card {background-color: #f0f2f6; padding: 1rem; border-radius: 0.5rem; margin: 0.5rem 0;}
+    .urgent-alert {background-color: #ffebee; border-left: 5px solid #f44336; padding: 1rem; margin: 1rem 0;}
+    .success-alert {background-color: #e8f5e9; border-left: 5px solid #4caf50; padding: 1rem; margin: 1rem 0;}
+    .warning-alert {background-color: #fff3e0; border-left: 5px solid #ff9800; padding: 1rem; margin: 1rem 0;}
+</style>
+""", unsafe_allow_html=True)
+
+# ==================== DATA LOADING ====================
+@st.cache_data
+def load_inventory_data():
+    """Load real inventory data from CSV files"""
+    try:
+        # Load master inventory table (from notebook analysis)
+        master_inventory = pd.read_csv('../Data/master_inventory_policy.csv')
+        
+        # Load historical sales data
+        historical_data = pd.read_csv('../Data/retail_store_inventory.csv')
+        historical_data['Date'] = pd.to_datetime(historical_data['Date'])
+        
+        return master_inventory, historical_data
+    except FileNotFoundError as e:
+        st.error(f"Data file not found: {e}")
+        st.stop()
+
+@st.cache_data
+def prepare_dashboard_data(master_inventory, historical_data):
+    """Prepare and enrich data for dashboard"""
+    
+    # Add category information (extract from SKU or assign based on product ID)
+    def assign_category(sku):
+        product_id = int(sku.split('_')[1][1:])
+        if product_id <= 5:
+            return 'Electronics'
+        elif product_id <= 10:
+            return 'Clothing'
+        elif product_id <= 15:
+            return 'Furniture'
+        else:
+            return 'Toys'
+    
+    master_inventory['Category'] = master_inventory['SKU_ID'].apply(assign_category)
+    
+    # Add current inventory simulation (replace with real data)
+    np.random.seed(42)
+    master_inventory['Current_Inventory'] = (
+        master_inventory['Reorder_Point'] * np.random.uniform(0.5, 1.5, len(master_inventory))
+    ).round(0).astype(int)
+    
+    # Calculate key metrics
+    master_inventory['Reorder_Needed'] = (
+        master_inventory['Current_Inventory'] < master_inventory['Reorder_Point']
+    )
+    
+    master_inventory['Days_Stock_Remaining'] = (
+        master_inventory['Current_Inventory'] / master_inventory['Avg_Daily_Demand']
+    ).round(1)
+    
+    master_inventory['Stock_Status'] = pd.cut(
+        master_inventory['Days_Stock_Remaining'],
+        bins=[-np.inf, 3, 7, np.inf],
+        labels=['Critical', 'Low', 'Healthy']
+    )
+    
+    # Calculate inventory value (assuming unit price)
+    master_inventory['Inventory_Value'] = master_inventory['Current_Inventory'] * 50
+    
+    return master_inventory, historical_data
+
+# Load data
+master_inventory, historical_data = load_inventory_data()
+master_inventory, historical_data = prepare_dashboard_data(master_inventory, historical_data)
+
+# ==================== SIDEBAR FILTERS ====================
+st.sidebar.image("https://img.icons8.com/fluency/96/warehouse.png", width=80)
+st.sidebar.title("🎛️ Dashboard Controls")
+
+# Date selector
+today = datetime.now().date()
+st.sidebar.subheader("📅 Date Range")
+date_range = st.sidebar.date_input(
+    "Select Period",
+    value=(today - timedelta(days=30), today),
+    max_value=today
+)
+
+# Category filter
+st.sidebar.subheader("📊 Filters")
+categories = ['All Categories'] + sorted(master_inventory['Category'].unique().tolist())
+selected_category = st.sidebar.selectbox("Category", categories)
+
+# Stock status filter
+status_options = ['All Status', 'Critical', 'Low', 'Healthy']
+selected_status = st.sidebar.selectbox("Stock Status", status_options)
+
+# Reorder filter
+show_reorder_only = st.sidebar.checkbox("Show Only Reorder Needed", value=False)
+
+# Apply filters
+filtered_data = master_inventory.copy()
+
+if selected_category != 'All Categories':
+    filtered_data = filtered_data[filtered_data['Category'] == selected_category]
+
+if selected_status != 'All Status':
+    filtered_data = filtered_data[filtered_data['Stock_Status'] == selected_status]
+
+if show_reorder_only:
+    filtered_data = filtered_data[filtered_data['Reorder_Needed'] == True]
+
+st.sidebar.markdown("---")
+st.sidebar.info(f"📦 **{len(filtered_data)}** SKUs displayed")
+
+# ==================== MAIN DASHBOARD ====================
+
+# Header
+st.markdown('<p class="main-header">📦 Inventory Reorder Management System</p>', unsafe_allow_html=True)
+st.markdown(f"**Last Updated:** {datetime.now().strftime('%B %d, %Y at %I:%M %p')}")
+
+# ==================== KEY METRICS ROW ====================
+st.markdown("### 📊 Key Performance Indicators")
+
+col1, col2, col3, col4, col5 = st.columns(5)
+
+# KPI 1: Total SKUs
+with col1:
+    total_skus = len(filtered_data)
+    st.metric("Total SKUs", f"{total_skus}")
+
+# KPI 2: Reorder Needed
+with col2:
+    reorder_count = filtered_data['Reorder_Needed'].sum()
+    reorder_pct = (reorder_count / total_skus * 100) if total_skus > 0 else 0
+    st.metric("Reorder Needed", f"{reorder_count}", delta=f"{reorder_pct:.1f}%", delta_color="inverse")
+
+# KPI 3: Critical Stock
+with col3:
+    critical_count = (filtered_data['Stock_Status'] == 'Critical').sum()
+    st.metric("Critical Stock", f"{critical_count}", delta="Urgent", delta_color="inverse")
+
+# KPI 4: Total Inventory Value
+with col4:
+    total_value = filtered_data['Inventory_Value'].sum()
+    st.metric("Inventory Value", f"${total_value:,.0f}")
+
+# KPI 5: Avg Days Stock
+with col5:
+    avg_days = filtered_data['Days_Stock_Remaining'].mean()
+    st.metric("Avg Days Stock", f"{avg_days:.1f} days")
+
+st.markdown("---")
+
+# ==================== URGENT REORDER ALERTS ====================
+urgent_reorders = filtered_data[filtered_data['Reorder_Needed']].sort_values('Days_Stock_Remaining')
+
+if len(urgent_reorders) > 0:
+    st.markdown("### 🚨 Urgent Reorder Alerts")
+    
+    # Show top 5 most urgent
+    top_urgent = urgent_reorders.head(5)
+    
+    for idx, row in top_urgent.iterrows():
+        days_left = row['Days_Stock_Remaining']
+        alert_class = 'urgent-alert' if days_left < 3 else 'warning-alert'
+        
+        st.markdown(f"""
+        <div class="{alert_class}">
+            <strong>⚠️ {row['SKU_ID']}</strong> - {row['Category']}<br>
+            Current Stock: <strong>{int(row['Current_Inventory'])}</strong> units | 
+            Reorder Point: <strong>{int(row['Reorder_Point'])}</strong> units | 
+            Days Remaining: <strong>{days_left}</strong> days<br>
+            <strong>ACTION:</strong> Order <strong>{int(row['Reorder_Quantity_EOQ'])}</strong> units immediately!
+        </div>
+        """, unsafe_allow_html=True)
+    
+    if len(urgent_reorders) > 5:
+        with st.expander(f"📋 View All {len(urgent_reorders)} Reorder Alerts"):
+            st.dataframe(
+                urgent_reorders[['SKU_ID', 'Category', 'Current_Inventory', 'Reorder_Point', 
+                                'Days_Stock_Remaining', 'Reorder_Quantity_EOQ']],
+                use_container_width=True,
+                hide_index=True
+            )
+else:
+    st.markdown("""
+    <div class="success-alert">
+        <strong>✅ All Clear!</strong> No urgent reorder alerts. All SKUs have healthy stock levels.
+    </div>
+    """, unsafe_allow_html=True)
+
+st.markdown("---")
+
+# ==================== VISUALIZATION SECTION ====================
+
+# Row 1: Stock Status Distribution and Top SKUs
+col_left, col_right = st.columns(2)
+
+with col_left:
+    st.markdown("### 📊 Stock Status Distribution")
+    
+    status_counts = filtered_data['Stock_Status'].value_counts().reset_index()
+    status_counts.columns = ['Status', 'Count']
+    
+    fig_status = px.pie(
+        status_counts,
+        values='Count',
+        names='Status',
+        color='Status',
+        color_discrete_map={'Critical': '#f44336', 'Low': '#ff9800', 'Healthy': '#4caf50'},
+        hole=0.4
+    )
+    fig_status.update_traces(textposition='inside', textinfo='percent+label')
+    fig_status.update_layout(showlegend=True, height=350)
+    st.plotly_chart(fig_status, use_container_width=True)
+
+with col_right:
+    st.markdown("### 🔝 Top 10 SKUs by Demand")
+    
+    top_demand = filtered_data.nlargest(10, 'Avg_Daily_Demand')[['SKU_ID', 'Avg_Daily_Demand', 'Category']]
+    
+    fig_demand = px.bar(
+        top_demand,
+        x='Avg_Daily_Demand',
+        y='SKU_ID',
+        orientation='h',
+        color='Category',
+        text='Avg_Daily_Demand'
+    )
+    fig_demand.update_traces(texttemplate='%{text:.0f}', textposition='outside')
+    fig_demand.update_layout(yaxis={'categoryorder': 'total ascending'}, height=350)
+    st.plotly_chart(fig_demand, use_container_width=True)
+
+st.markdown("---")
+
+# Row 2: Reorder Points vs Current Inventory
+st.markdown("### 📉 Inventory Levels: Current Stock vs Reorder Points")
+
+fig_inventory = go.Figure()
+
+# Sort by days remaining for better visualization
+display_data = filtered_data.sort_values('Days_Stock_Remaining').head(20)
+
+fig_inventory.add_trace(go.Bar(
+    x=display_data['SKU_ID'],
+    y=display_data['Current_Inventory'],
+    name='Current Stock',
+    marker_color='lightblue'
+))
+
+fig_inventory.add_trace(go.Scatter(
+    x=display_data['SKU_ID'],
+    y=display_data['Reorder_Point'],
+    mode='markers+lines',
+    name='Reorder Point',
+    marker=dict(size=10, color='red', symbol='diamond'),
+    line=dict(color='red', dash='dash')
+))
+
+fig_inventory.add_trace(go.Scatter(
+    x=display_data['SKU_ID'],
+    y=display_data['Safety_Stock'],
+    mode='lines',
+    name='Safety Stock',
+    line=dict(color='orange', dash='dot')
+))
+
+fig_inventory.update_layout(
+    xaxis_title="SKU",
+    yaxis_title="Units",
+    hovermode='x unified',
+    height=400,
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+)
+
+st.plotly_chart(fig_inventory, use_container_width=True)
+
+st.markdown("---")
+
+# Row 3: Category Analysis and Cost Analysis
+col1, col2 = st.columns(2)
+
+with col1:
+    st.markdown("### 📦 Category Performance")
+    
+    category_summary = filtered_data.groupby('Category').agg({
+        'SKU_ID': 'count',
+        'Reorder_Needed': 'sum',
+        'Inventory_Value': 'sum',
+        'Annual_Inventory_Cost': 'sum'
+    }).reset_index()
+    
+    category_summary.columns = ['Category', 'SKU_Count', 'Reorder_Count', 'Inventory_Value', 'Annual_Cost']
+    
+    fig_category = px.bar(
+        category_summary,
+        x='Category',
+        y=['SKU_Count', 'Reorder_Count'],
+        barmode='group',
+        labels={'value': 'Count', 'variable': 'Metric'},
+        color_discrete_map={'SKU_Count': '#1f77b4', 'Reorder_Count': '#ff7f0e'}
+    )
+    fig_category.update_layout(height=350)
+    st.plotly_chart(fig_category, use_container_width=True)
+
+with col2:
+    st.markdown("### 💰 Inventory Cost Analysis")
+    
+    fig_cost = px.scatter(
+        filtered_data,
+        x='Avg_Daily_Demand',
+        y='Annual_Inventory_Cost',
+        size='Reorder_Quantity_EOQ',
+        color='Category',
+        hover_data=['SKU_ID', 'Reorder_Point'],
+        labels={'Avg_Daily_Demand': 'Daily Demand', 'Annual_Inventory_Cost': 'Annual Cost ($)'}
+    )
+    fig_cost.update_layout(height=350)
+    st.plotly_chart(fig_cost, use_container_width=True)
+
+st.markdown("---")
+
+# ==================== DETAILED SKU ANALYSIS ====================
+st.markdown("### 🔍 Detailed SKU Analysis")
+
+# SKU selector
+selected_sku = st.selectbox(
+    "Select SKU for Detailed View",
+    options=filtered_data['SKU_ID'].tolist()
+)
+
+if selected_sku:
+    sku_data = filtered_data[filtered_data['SKU_ID'] == selected_sku].iloc[0]
+    
+    # SKU Details
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Current Stock", f"{int(sku_data['Current_Inventory'])}")
+        st.metric("Reorder Point", f"{int(sku_data['Reorder_Point'])}")
+    
+    with col2:
+        st.metric("Safety Stock", f"{int(sku_data['Safety_Stock'])}")
+        st.metric("Reorder Quantity", f"{int(sku_data['Reorder_Quantity_EOQ'])}")
+    
+    with col3:
+        st.metric("Avg Daily Demand", f"{sku_data['Avg_Daily_Demand']:.1f}")
+        st.metric("Std Deviation", f"{sku_data['Std_Daily_Demand']:.1f}")
+    
+    with col4:
+        st.metric("Days Stock Left", f"{sku_data['Days_Stock_Remaining']:.1f}")
+        st.metric("Annual Cost", f"${sku_data['Annual_Inventory_Cost']:,.0f}")
+    
+    # Historical demand chart
+    sku_history = historical_data[historical_data['SKU_Compound_ID'] == selected_sku]
+    
+    if len(sku_history) > 0:
+        st.markdown("#### 📈 Historical Demand Pattern")
+        
+        daily_demand = sku_history.groupby('Date')['Units Sold'].sum().reset_index()
+        
+        fig_history = go.Figure()
+        
+        fig_history.add_trace(go.Scatter(
+            x=daily_demand['Date'],
+            y=daily_demand['Units Sold'],
+            mode='lines',
+            name='Daily Demand',
+            line=dict(color='blue')
+        ))
+        
+        # Add average demand line
+        avg_demand = daily_demand['Units Sold'].mean()
+        fig_history.add_hline(
+            y=avg_demand,
+            line_dash="dash",
+            line_color="green",
+            annotation_text=f"Avg: {avg_demand:.0f}",
+            annotation_position="right"
+        )
+        
+        fig_history.update_layout(
+            xaxis_title="Date",
+            yaxis_title="Units Sold",
+            hovermode='x unified',
+            height=350
+        )
+        
+        st.plotly_chart(fig_history, use_container_width=True)
+
+st.markdown("---")
+
+# ==================== DATA EXPORT SECTION ====================
+st.markdown("### 💾 Export Data")
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    # Export reorder list
+    if st.button("📥 Download Reorder List"):
+        reorder_list = filtered_data[filtered_data['Reorder_Needed']][
+            ['SKU_ID', 'Category', 'Current_Inventory', 'Reorder_Point', 
+             'Reorder_Quantity_EOQ', 'Days_Stock_Remaining']
+        ]
+        csv = reorder_list.to_csv(index=False)
+        st.download_button(
+            label="Download CSV",
+            data=csv,
+            file_name=f"reorder_list_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
+
+with col2:
+    # Export full inventory report
+    if st.button("📥 Download Full Report"):
+        csv = filtered_data.to_csv(index=False)
+        st.download_button(
+            label="Download CSV",
+            data=csv,
+            file_name=f"inventory_report_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
+
+with col3:
+    # Refresh data
+    if st.button("🔄 Refresh Dashboard"):
+        st.cache_data.clear()
+        st.rerun()
+
+# ==================== FOOTER ====================
+st.markdown("---")
+st.markdown("""
+<div style='text-align: center; color: gray; padding: 1rem;'>
+    <strong>Inventory Reorder Management System</strong><br>
+    Built with Streamlit & Plotly | Powered by Prophet Forecasting<br>
+    © 2025 Tracy Miriti | Data-Driven Inventory Optimization
+</div>
 """, unsafe_allow_html=True)
