@@ -73,7 +73,7 @@ This is where we discovered important patterns in the data.
 
 #### **Finding 1: Balanced Business**
 
-![Category and Regional Distribution](./Notebook/visualizations/category_regional_distribution.png)
+![Category and Regional Distribution](./Notebook/Category%20and%20Regional%20Distribution.png)
 
 **Categories are perfectly balanced:**
 - Electronics: 620,000 units
@@ -93,7 +93,7 @@ This is where we discovered important patterns in the data.
 
 #### **Finding 2: Price Doesn't Matter**
 
-![Price Sensitivity Analysis](./Notebook/visualizations/price_sensitivity.png)
+![Price Sensitivity Analysis](./Notebook/Price%20Sensitivity.png)
 
 **Tested 5 price tiers from very low to very high:**
 - All tiers sold ~137 units/day
@@ -105,7 +105,7 @@ This is where we discovered important patterns in the data.
 
 #### **Finding 3: Discounts Don't Work**
 
-![Discount Impact Analysis](./Notebook/visualizations/discount_impact.png)
+![Discount Impact Analysis](./Notebook/Discount%20Impact.png)
 
 **Tested discount levels from 0% to 20%+:**
 - All levels sold exactly 137 units/day
@@ -117,7 +117,7 @@ This is where we discovered important patterns in the data.
 
 #### **Finding 4: Holidays Are Oversaturated**
 
-![Holiday/Promotion Impact](./Notebook/visualizations/holiday_impact.png)
+![Holiday/Promotion Impact](./Notebook/Holiday%20Promotion%20Impact.png)
 
 **Regular days vs. Holiday/Promo days:**
 - Regular: 137 units/day (50% of days)
@@ -130,7 +130,7 @@ This is where we discovered important patterns in the data.
 
 #### **Finding 5: Weather Doesn't Affect Sales**
 
-![Weather Impact Analysis](./Notebook/visualizations/weather_impact.png)
+![Weather Impact Analysis](./Notebook/Weather%20Condition%20Impact%20on%20Demand.png)
 
 **Demand by weather condition:**
 - Sunny: 137.2 units
@@ -154,7 +154,7 @@ This is where we discovered important patterns in the data.
 
 ####  **Finding 7: Correlation Heatmap**
 
-![Correlation Heatmap](./Notebook/visualizations/correlation_heatmap.png)
+![Correlation Heatmap](./Notebook/Correlation%20Heatmap.png)
 
 **What we found:**
 - Units Sold has very weak correlation with Price, Discount, Weather
@@ -199,7 +199,7 @@ We tested **5 different forecasting models** to find the best one. Used SKU `S00
 
 ####  **Model Comparison Results**
 
-![Model Performance Comparison](./Notebook/visualizations/model_comparison.png)
+![Model Performance Comparison](./Notebook/Model%20Comparison%20-%20All%20methods.png)
 
 **Evaluation Metrics:**
 - **MAE (Mean Absolute Error):** Average error in units - lower is better
@@ -251,7 +251,7 @@ We tested **5 different forecasting models** to find the best one. Used SKU `S00
 
 ####  **Prophet Forecast Visualization**
 
-![Prophet 30-Day Forecast](./Notebook/visualizations/prophet_forecast.png)
+![Prophet 30-Day Forecast](./Notebook/Prophet%20Forecast.png)
 
 **What the chart shows:**
 - Black dots: Actual historical demand
@@ -267,7 +267,7 @@ We tested **5 different forecasting models** to find the best one. Used SKU `S00
 
 ####  **LSTM vs Prophet Visual Comparison**
 
-![LSTM Predictions](./Notebook/visualizations/lstm_predictions.png)
+![LSTM Predictions](./Notebook/LSTM%20actual%20vs%20Predicted%20demand.png)
 
 **What we see:**
 - LSTM predictions (orange line) are very flat
@@ -357,7 +357,7 @@ We tested if our reorder policies actually work by simulating 2 years of invento
 
 #### ✅ **Backtesting Results**
 
-![Backtest Visualization](./Notebook/visualizations/backtest_simulation.png)
+![Backtest Visualization](./Notebook/Backtest%20Simulation.png)
 
 **Test Setup:**
 - Simulated 731 days (2 years) of operations
