@@ -193,13 +193,27 @@ if len(urgent_reorders) > 0:
         </div>
         """, unsafe_allow_html=True)
     
+    # Calculate total reorder cost
+    total_reorder_cost = (urgent_reorders['Reorder_Quantity_EOQ'] * 50).sum()  # Assuming $50 per unit
+    st.info(f"💰 **Total Reorder Cost:** ${total_reorder_cost:,.0f} for {len(urgent_reorders)} SKUs")
+    
     if len(urgent_reorders) > 5:
         with st.expander(f"📋 View All {len(urgent_reorders)} Reorder Alerts"):
+            # Add cost column
+            urgent_reorders_display = urgent_reorders.copy()
+            urgent_reorders_display['Reorder_Cost'] = (urgent_reorders_display['Reorder_Quantity_EOQ'] * 50).round(0).astype(int)
+            
             st.dataframe(
-                urgent_reorders[['SKU_ID', 'Category', 'Current_Inventory', 'Reorder_Point', 
-                                'Days_Stock_Remaining', 'Reorder_Quantity_EOQ']],
+                urgent_reorders_display[['SKU_ID', 'Category', 'Current_Inventory', 'Reorder_Point', 
+                                'Days_Stock_Remaining', 'Reorder_Quantity_EOQ', 'Reorder_Cost']],
                 use_container_width=True,
-                hide_index=True
+                hide_index=True,
+                column_config={
+                    "Reorder_Cost": st.column_config.NumberColumn(
+                        "Reorder Cost",
+                        format="$%d"
+                    )
+                }
             )
 else:
     st.markdown("""
