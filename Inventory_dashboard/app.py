@@ -528,12 +528,12 @@ with col3:
                 worksheet = workbook.add_worksheet('Charts')
                 
                 # Set up formatting
-                title_format = workbook.add_format({'bold': True, 'font_size': 16, 'align': 'center'})
+                title_format = workbook.add_format({'bold': True, 'font_size': 18, 'align': 'center'})
                 header_format = workbook.add_format({'bold': True, 'font_size': 12, 'bg_color': '#1f77b4', 'font_color': 'white'})
                 
                 # Add title
                 worksheet.merge_range('A1:J1', 'Inventory Dashboard - Visual Report', title_format)
-                worksheet.set_row(0, 25)
+                worksheet.set_row(0, 30)
                 
                 # Save charts as images and embed them
                 row = 2
