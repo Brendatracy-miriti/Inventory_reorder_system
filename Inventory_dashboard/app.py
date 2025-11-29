@@ -140,6 +140,11 @@ if show_reorder_only:
 st.sidebar.markdown("---")
 st.sidebar.info(f" **{len(filtered_data)}** SKUs displayed")
 
+# Refresh data button
+if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
+    st.cache_data.clear()
+    st.rerun()
+
 # ==================== MAIN DASHBOARD ====================
 
 # Header
@@ -191,6 +196,7 @@ if len(urgent_reorders) > 0:
     for idx, row in top_urgent.iterrows():
         days_left = row['Days_Stock_Remaining']
         alert_class = 'urgent-alert' if days_left < 3 else 'warning-alert'
+        reorder_cost = int(row['Reorder_Quantity_EOQ']) * 50  # Assuming $50 per unit
         
         st.markdown(f"""
         <div class="{alert_class}">
@@ -198,17 +204,32 @@ if len(urgent_reorders) > 0:
             Current Stock: <strong>{int(row['Current_Inventory'])}</strong> units | 
             Reorder Point: <strong>{int(row['Reorder_Point'])}</strong> units | 
             Days Remaining: <strong>{days_left}</strong> days<br>
-            <strong>ACTION:</strong> Order <strong>{int(row['Reorder_Quantity_EOQ'])}</strong> units immediately!
+            <strong>ACTION:</strong> Order <strong>{int(row['Reorder_Quantity_EOQ'])}</strong> units immediately!<br>
+            💰 <strong>Reorder Cost:</strong> ${reorder_cost:,}
         </div>
         """, unsafe_allow_html=True)
     
+    # Calculate total reorder cost
+    total_reorder_cost = (urgent_reorders['Reorder_Quantity_EOQ'] * 50).sum()  # Assuming $50 per unit
+    st.info(f"💰 **Total Reorder Cost:** ${total_reorder_cost:,.0f} for {len(urgent_reorders)} SKUs")
+    
     if len(urgent_reorders) > 5:
         with st.expander(f"📋 View All {len(urgent_reorders)} Reorder Alerts"):
+            # Add cost column
+            urgent_reorders_display = urgent_reorders.copy()
+            urgent_reorders_display['Reorder_Cost'] = (urgent_reorders_display['Reorder_Quantity_EOQ'] * 50).round(0).astype(int)
+            
             st.dataframe(
-                urgent_reorders[['SKU_ID', 'Category', 'Current_Inventory', 'Reorder_Point', 
-                                'Days_Stock_Remaining', 'Reorder_Quantity_EOQ']],
+                urgent_reorders_display[['SKU_ID', 'Category', 'Current_Inventory', 'Reorder_Point', 
+                                'Days_Stock_Remaining', 'Reorder_Quantity_EOQ', 'Reorder_Cost']],
                 use_container_width=True,
-                hide_index=True
+                hide_index=True,
+                column_config={
+                    "Reorder_Cost": st.column_config.NumberColumn(
+                        "Reorder Cost",
+                        format="$%d"
+                    )
+                }
             )
 else:
     st.markdown("""
@@ -461,11 +482,11 @@ st.markdown("---")
 # ==================== DATA EXPORT SECTION ====================
 st.markdown("### 💾 Export Data")
 
-col1, col2, col3 = st.columns(3)
+col1, col2 = st.columns(2)
 
 with col1:
     # Export reorder list
-    if st.button("📥 Download Reorder List"):
+    if st.button("📥 Download Reorder List", use_container_width=True):
         reorder_list = filtered_data[filtered_data['Reorder_Needed']][
             ['SKU_ID', 'Category', 'Current_Inventory', 'Reorder_Point', 
              'Reorder_Quantity_EOQ', 'Days_Stock_Remaining']
@@ -475,25 +496,21 @@ with col1:
             label="Download CSV",
             data=csv,
             file_name=f"reorder_list_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv"
+            mime="text/csv",
+            use_container_width=True
         )
 
 with col2:
     # Export full inventory report
-    if st.button("📥 Download Full Report"):
+    if st.button("📥 Download Full Report", use_container_width=True):
         csv = filtered_data.to_csv(index=False)
         st.download_button(
             label="Download CSV",
             data=csv,
             file_name=f"inventory_report_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv"
+            mime="text/csv",
+            use_container_width=True
         )
-
-with col3:
-    # Refresh data
-    if st.button("🔄 Refresh Dashboard"):
-        st.cache_data.clear()
-        st.rerun()
 
 # ==================== FOOTER ====================
 st.markdown("---")
