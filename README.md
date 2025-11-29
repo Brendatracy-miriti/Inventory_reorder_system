@@ -1,5 +1,7 @@
 # Inventory Reorder Management System
 
+🚀 **[Try the Live Dashboard](https://brendatracy-miriti-inventory-reor-inventory-dashboardapp-alm7sw.streamlit.app/)**
+
 ##  What This Project Does
 
 This project automatically predicts **when and how much inventory to order** for 100 different products across 5 stores using machine learning.
@@ -669,9 +671,7 @@ Inventory_reorder_system/
 
 6. **ABC Analysis** - Categorize SKUs by importance (high/medium/low value)
 
-7. **Mobile App** - Create mobile version for warehouse managers
-
-8. **Demand Clustering** - Group similar SKUs for more efficient forecasting
+7. **Demand Clustering** - Group similar SKUs for more efficient forecasting
 
 ---
 
@@ -736,6 +736,6 @@ MIT License - free to use, modify, and distribute with attribution.
 
 ---
 
-**📊 [View Notebook](./Notebook/inventory_reorder_system.ipynb)  |  📱 [Try Dashboard](./Inventory_dashboard/app.py)  |  📈 [View Data](./Data/)**
+**📊 [View Notebook](./Notebook/inventory_reorder_system.ipynb)  |  📱 [Live Dashboard](https://brendatracy-miriti-inventory-reor-inventory-dashboardapp-alm7sw.streamlit.app/)  |  📈 [View Data](./Data/)**
 
 </div>
