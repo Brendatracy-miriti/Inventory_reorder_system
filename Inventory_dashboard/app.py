@@ -34,16 +34,26 @@ st.markdown("""
 def load_inventory_data():
     """Load real inventory data from CSV files"""
     try:
-        # Load master inventory table (from notebook analysis)
-        master_inventory = pd.read_csv('../Data/master_inventory_policy.csv')
+        # Try multiple path options for deployment flexibility
+        paths_to_try = [
+            ('../Data/master_inventory_policy.csv', '../Data/retail_store_inventory.csv'),
+            ('Data/master_inventory_policy.csv', 'Data/retail_store_inventory.csv'),
+            ('./Data/master_inventory_policy.csv', './Data/retail_store_inventory.csv')
+        ]
         
-        # Load historical sales data
-        historical_data = pd.read_csv('../Data/retail_store_inventory.csv')
-        historical_data['Date'] = pd.to_datetime(historical_data['Date'])
+        for master_path, historical_path in paths_to_try:
+            if os.path.exists(master_path) and os.path.exists(historical_path):
+                master_inventory = pd.read_csv(master_path)
+                historical_data = pd.read_csv(historical_path)
+                historical_data['Date'] = pd.to_datetime(historical_data['Date'])
+                return master_inventory, historical_data
         
-        return master_inventory, historical_data
+        # If no paths work, raise error
+        raise FileNotFoundError("Data files not found in any expected location")
+        
     except FileNotFoundError as e:
         st.error(f"Data file not found: {e}")
+        st.error("Please ensure 'Data' folder with CSV files is in the repository.")
         st.stop()
 
 @st.cache_data
@@ -96,8 +106,13 @@ master_inventory, historical_data = prepare_dashboard_data(master_inventory, his
 
 # Get data file last modification time
 try:
-    data_file_path = '../Data/master_inventory_policy.csv'
-    data_last_modified = datetime.fromtimestamp(os.path.getmtime(data_file_path))
+    # Try multiple path options
+    for data_file_path in ['../Data/master_inventory_policy.csv', 'Data/master_inventory_policy.csv', './Data/master_inventory_policy.csv']:
+        if os.path.exists(data_file_path):
+            data_last_modified = datetime.fromtimestamp(os.path.getmtime(data_file_path))
+            break
+    else:
+        data_last_modified = datetime.now()
 except Exception:
     data_last_modified = datetime.now()
 
