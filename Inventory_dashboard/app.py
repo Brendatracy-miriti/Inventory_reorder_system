@@ -6,6 +6,8 @@ from plotly.subplots import make_subplots
 import numpy as np
 import os
 from datetime import datetime, timedelta
+import io
+from PIL import Image
 
 # ==================== PAGE CONFIGURATION ====================
 st.set_page_config(
@@ -482,35 +484,117 @@ st.markdown("---")
 # ==================== DATA EXPORT SECTION ====================
 st.markdown("### 💾 Export Data")
 
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 
 with col1:
-    # Export reorder list
-    if st.button("📥 Download Reorder List", use_container_width=True):
-        reorder_list = filtered_data[filtered_data['Reorder_Needed']][
-            ['SKU_ID', 'Category', 'Current_Inventory', 'Reorder_Point', 
-             'Reorder_Quantity_EOQ', 'Days_Stock_Remaining']
-        ]
-        csv = reorder_list.to_csv(index=False)
-        st.download_button(
-            label="Download CSV",
-            data=csv,
-            file_name=f"reorder_list_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
+    # Export reorder list (CSV)
+    st.markdown("#### 📄 Reorder List")
+    reorder_list = filtered_data[filtered_data['Reorder_Needed']][
+        ['SKU_ID', 'Category', 'Current_Inventory', 'Reorder_Point', 
+         'Reorder_Quantity_EOQ', 'Days_Stock_Remaining']
+    ]
+    csv = reorder_list.to_csv(index=False)
+    st.download_button(
+        label="📥 CSV Format",
+        data=csv,
+        file_name=f"reorder_list_{datetime.now().strftime('%Y%m%d')}.csv",
+        mime="text/csv",
+        use_container_width=True
+    )
 
 with col2:
-    # Export full inventory report
-    if st.button("📥 Download Full Report", use_container_width=True):
-        csv = filtered_data.to_csv(index=False)
-        st.download_button(
-            label="Download CSV",
-            data=csv,
-            file_name=f"inventory_report_{datetime.now().strftime('%Y%m%d')}.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
+    # Export full inventory report (CSV)
+    st.markdown("#### 📊 Full Report (Data)")
+    csv_full = filtered_data.to_csv(index=False)
+    st.download_button(
+        label="📥 CSV Format",
+        data=csv_full,
+        file_name=f"inventory_report_{datetime.now().strftime('%Y%m%d')}.csv",
+        mime="text/csv",
+        use_container_width=True
+    )
+
+with col3:
+    # Export report with charts (Excel with embedded charts)
+    st.markdown("#### 📈 Report with Charts")
+    
+    if st.button("📥 Generate Excel Report", use_container_width=True):
+        try:
+            # Create Excel writer
+            output = io.BytesIO()
+            
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                workbook = writer.book
+                worksheet = workbook.add_worksheet('Charts')
+                
+                # Set up formatting
+                title_format = workbook.add_format({'bold': True, 'font_size': 16, 'align': 'center'})
+                header_format = workbook.add_format({'bold': True, 'font_size': 12, 'bg_color': '#1f77b4', 'font_color': 'white'})
+                
+                # Add title
+                worksheet.merge_range('A1:J1', 'Inventory Dashboard - Visual Report', title_format)
+                worksheet.set_row(0, 25)
+                
+                # Save charts as images and embed them
+                row = 2
+                
+                # Chart 1: Stock Status Distribution
+                worksheet.write(row, 0, 'Stock Status Distribution', header_format)
+                status_counts = filtered_data['Stock_Status'].value_counts().reset_index()
+                status_counts.columns = ['Status', 'Count']
+                fig_status = px.pie(status_counts, values='Count', names='Status', 
+                                   color='Status', 
+                                   color_discrete_map={'Critical': '#f44336', 'Low': '#ff9800', 'Healthy': '#4caf50'},
+                                   hole=0.4, title='Stock Status Distribution')
+                img_bytes = fig_status.to_image(format="png", width=600, height=400)
+                worksheet.insert_image(row + 1, 0, 'stock_status.png', {'image_data': io.BytesIO(img_bytes)})
+                row += 22
+                
+                # Chart 2: Top SKUs by Demand
+                worksheet.write(row, 0, 'Top 10 SKUs by Demand', header_format)
+                top_demand = filtered_data.nlargest(10, 'Avg_Daily_Demand')[['SKU_ID', 'Avg_Daily_Demand', 'Category']]
+                fig_demand = px.bar(top_demand, x='Avg_Daily_Demand', y='SKU_ID', orientation='h',
+                                   color='Category', title='Top 10 SKUs by Average Daily Demand')
+                img_bytes = fig_demand.to_image(format="png", width=700, height=400)
+                worksheet.insert_image(row + 1, 0, 'top_demand.png', {'image_data': io.BytesIO(img_bytes)})
+                row += 22
+                
+                # Chart 3: Category Performance
+                worksheet.write(row, 0, 'Category Performance', header_format)
+                category_summary = filtered_data.groupby('Category').agg({
+                    'SKU_ID': 'count',
+                    'Reorder_Needed': 'sum'
+                }).reset_index()
+                category_summary.columns = ['Category', 'SKU_Count', 'Reorder_Count']
+                fig_category = px.bar(category_summary, x='Category', y=['SKU_Count', 'Reorder_Count'],
+                                     barmode='group', title='Category Performance: SKU Count vs Reorder Needs')
+                img_bytes = fig_category.to_image(format="png", width=700, height=400)
+                worksheet.insert_image(row + 1, 0, 'category.png', {'image_data': io.BytesIO(img_bytes)})
+                row += 22
+                
+                # Chart 4: Inventory Cost Analysis
+                worksheet.write(row, 0, 'Inventory Cost Analysis', header_format)
+                fig_cost = px.scatter(filtered_data, x='Avg_Daily_Demand', y='Annual_Inventory_Cost',
+                                     size='Reorder_Quantity_EOQ', color='Category',
+                                     title='Inventory Cost vs Daily Demand by Category')
+                img_bytes = fig_cost.to_image(format="png", width=700, height=400)
+                worksheet.insert_image(row + 1, 0, 'cost.png', {'image_data': io.BytesIO(img_bytes)})
+            
+            output.seek(0)
+            
+            st.download_button(
+                label="⬇️ Download Excel",
+                data=output,
+                file_name=f"inventory_charts_report_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+            
+            st.success("✅ Excel report with embedded charts generated successfully!")
+            
+        except Exception as e:
+            st.error(f"Error generating report: {str(e)}")
+            st.info("💡 Make sure you have 'kaleido' installed for chart export: `pip install kaleido`")
 
 # ==================== FOOTER ====================
 st.markdown("---")
