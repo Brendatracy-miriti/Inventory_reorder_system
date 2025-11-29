@@ -4,6 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
+import os
 from datetime import datetime, timedelta
 
 # ==================== PAGE CONFIGURATION ====================
@@ -91,17 +92,25 @@ def prepare_dashboard_data(master_inventory, historical_data):
 master_inventory, historical_data = load_inventory_data()
 master_inventory, historical_data = prepare_dashboard_data(master_inventory, historical_data)
 
+# Get data file last modification time
+try:
+    data_file_path = '../Data/master_inventory_policy.csv'
+    data_last_modified = datetime.fromtimestamp(os.path.getmtime(data_file_path))
+except Exception:
+    data_last_modified = datetime.now()
+
 # ==================== SIDEBAR FILTERS ====================
 st.sidebar.image("https://img.icons8.com/fluency/96/warehouse.png", width=80)
 st.sidebar.title(" Dashboard Controls")
 
-# Date selector
+# Date selector for historical demand analysis
 today = datetime.now().date()
-st.sidebar.subheader(" Date Range")
+st.sidebar.subheader("📅 Historical Analysis Period")
 date_range = st.sidebar.date_input(
-    "Select Period",
+    "Select Date Range",
     value=(today - timedelta(days=30), today),
-    max_value=today
+    max_value=today,
+    help="Filter historical demand charts by date range"
 )
 
 # Category filter
@@ -135,7 +144,7 @@ st.sidebar.info(f" **{len(filtered_data)}** SKUs displayed")
 
 # Header
 st.markdown('<p class="main-header"> Inventory Reorder Management System</p>', unsafe_allow_html=True)
-st.markdown(f"**Last Updated:** {datetime.now().strftime('%B %d, %Y at %I:%M %p')}")
+st.markdown(f"**Data Last Updated:** {data_last_modified.strftime('%B %d, %Y at %I:%M %p')}")
 
 # ==================== KEY METRICS ROW ====================
 st.markdown("### 📊 Key Performance Indicators")
@@ -193,27 +202,13 @@ if len(urgent_reorders) > 0:
         </div>
         """, unsafe_allow_html=True)
     
-    # Calculate total reorder cost
-    total_reorder_cost = (urgent_reorders['Reorder_Quantity_EOQ'] * 50).sum()  # Assuming $50 per unit
-    st.info(f"💰 **Total Reorder Cost:** ${total_reorder_cost:,.0f} for {len(urgent_reorders)} SKUs")
-    
     if len(urgent_reorders) > 5:
         with st.expander(f"📋 View All {len(urgent_reorders)} Reorder Alerts"):
-            # Add cost column
-            urgent_reorders_display = urgent_reorders.copy()
-            urgent_reorders_display['Reorder_Cost'] = (urgent_reorders_display['Reorder_Quantity_EOQ'] * 50).round(0).astype(int)
-            
             st.dataframe(
-                urgent_reorders_display[['SKU_ID', 'Category', 'Current_Inventory', 'Reorder_Point', 
-                                'Days_Stock_Remaining', 'Reorder_Quantity_EOQ', 'Reorder_Cost']],
+                urgent_reorders[['SKU_ID', 'Category', 'Current_Inventory', 'Reorder_Point', 
+                                'Days_Stock_Remaining', 'Reorder_Quantity_EOQ']],
                 use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Reorder_Cost": st.column_config.NumberColumn(
-                        "Reorder Cost",
-                        format="$%d"
-                    )
-                }
+                hide_index=True
             )
 else:
     st.markdown("""
@@ -407,37 +402,59 @@ if selected_sku:
             'Units_Sold' if 'Units_Sold' in sku_history.columns else 'units_sold'
         )
         
-        daily_demand = sku_history.groupby('Date')[units_col].sum().reset_index()
+        # Apply date range filter
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            start_date, end_date = date_range
+            sku_history_filtered = sku_history[
+                (sku_history['Date'].dt.date >= start_date) & 
+                (sku_history['Date'].dt.date <= end_date)
+            ]
+        else:
+            sku_history_filtered = sku_history
+        
+        daily_demand = sku_history_filtered.groupby('Date')[units_col].sum().reset_index()
         daily_demand.columns = ['Date', 'Units_Sold']
         
-        fig_history = go.Figure()
-        
-        fig_history.add_trace(go.Scatter(
-            x=daily_demand['Date'],
-            y=daily_demand['Units_Sold'],
-            mode='lines',
-            name='Daily Demand',
-            line=dict(color='blue')
-        ))
-        
-        # Add average demand line
-        avg_demand = daily_demand['Units_Sold'].mean()
-        fig_history.add_hline(
-            y=avg_demand,
-            line_dash="dash",
-            line_color="green",
-            annotation_text=f"Avg: {avg_demand:.0f}",
-            annotation_position="right"
-        )
-        
-        fig_history.update_layout(
-            xaxis_title="Date",
-            yaxis_title="Units Sold",
-            hovermode='x unified',
-            height=350
-        )
-        
-        st.plotly_chart(fig_history, use_container_width=True)
+        if len(daily_demand) > 0:
+            fig_history = go.Figure()
+            
+            fig_history.add_trace(go.Scatter(
+                x=daily_demand['Date'],
+                y=daily_demand['Units_Sold'],
+                mode='lines',
+                name='Daily Demand',
+                line=dict(color='blue')
+            ))
+            
+            # Add average demand line
+            avg_demand = daily_demand['Units_Sold'].mean()
+            fig_history.add_hline(
+                y=avg_demand,
+                line_dash="dash",
+                line_color="green",
+                annotation_text=f"Avg: {avg_demand:.0f}",
+                annotation_position="right"
+            )
+            
+            fig_history.update_layout(
+                xaxis_title="Date",
+                yaxis_title="Units Sold",
+                hovermode='x unified',
+                height=350
+            )
+            
+            st.plotly_chart(fig_history, use_container_width=True)
+            
+            # Show summary stats for selected period
+            col_a, col_b, col_c = st.columns(3)
+            with col_a:
+                st.metric("Total Units Sold", f"{daily_demand['Units_Sold'].sum():,.0f}")
+            with col_b:
+                st.metric("Avg Daily Sales", f"{avg_demand:.1f}")
+            with col_c:
+                st.metric("Peak Day Sales", f"{daily_demand['Units_Sold'].max():.0f}")
+        else:
+            st.info(f"📅 No sales data available for the selected period ({start_date} to {end_date})")
 
 st.markdown("---")
 
