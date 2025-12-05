@@ -26,7 +26,7 @@ This project automatically predicts **when and how much inventory to order** for
 |--------|-------------|
 | **Source** | [Kaggle - Retail Store Inventory Dataset](https://www.kaggle.com/datasets/anirudhchauhan/retail-store-inventory-forecasting-dataset) |
 | **Size** | 18,000 transactions |
-| **Time Period** | 180 days |
+| **Time Period** | 731 days |
 | **Stores** | 5 locations (S001-S005) |
 | **Products** | 20 products (P0001-P0020) |
 | **Total SKUs** | 100 unique combinations |
@@ -52,8 +52,8 @@ Downloaded dataset from Kaggle and loaded into Pandas.
 **Initial Data Check:**
 - ✅ 18,000 rows × 12 columns
 - ✅ Zero missing values (clean dataset!)
-- ✅ 180 days of sales history
-- ✅ Date range: Full 6 months available
+- ✅ 731 days of sales history
+- ✅ Date range: 2 years available
 
 ---
 
